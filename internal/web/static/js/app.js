@@ -9,6 +9,7 @@ const routes = {
   '/reminders': renderReminders,
   '/settings': renderSettings,
   '/settings/vacation': renderVacationSettings,
+  ...(window.DR_ADMIN_ROUTES || {}),
 };
 
 document.addEventListener('DOMContentLoaded', boot);
@@ -21,6 +22,12 @@ async function boot() {
   }
   try {
     state.user = await API.get('/api/me');
+    if (hash.startsWith('/admin') && !state.user.is_admin) {
+      showToast('Admin access required', 'error');
+      location.hash = '#/today';
+      renderApp('/today');
+      return;
+    }
     renderApp(hash);
   } catch {
     location.hash = '#/login';
@@ -34,8 +41,15 @@ window.addEventListener('hashchange', () => {
     renderAuth(false);
     return;
   }
-  if (state.user) renderApp(hash);
-  else renderAuth(hash === '/signup');
+  if (state.user) {
+    if (hash.startsWith('/admin') && !state.user.is_admin) {
+      showToast('Admin access required', 'error');
+      location.hash = '#/today';
+      renderToday();
+      return;
+    }
+    renderApp(hash);
+  } else renderAuth(hash === '/signup');
 });
 
 function renderAuth(signup) {
@@ -99,6 +113,7 @@ function shellHTML(active, mainHTML) {
           <a href="#/today" class="${active === '/today' ? 'active' : ''}">Today</a>
           <a href="#/reminders" class="${active === '/reminders' ? 'active' : ''}">All reminders</a>
           <a href="#/settings" class="${active.startsWith('/settings') ? 'active' : ''}">Settings</a>
+          ${state.user?.is_admin ? `<a href="#/admin" class="${active.startsWith('/admin') ? 'active' : ''}">Admin</a>` : ''}
         </nav>
         <div class="sidebar-footer">
           <button class="btn btn-sm" id="theme-toggle">Theme</button>
@@ -142,6 +157,11 @@ function bindShell(active) {
 }
 
 async function renderApp(route) {
+  if (route.startsWith('/admin')) {
+    const fn = routes[route] || routes['/admin'];
+    await fn(route);
+    return;
+  }
   const fn = routes[route] || routes['/today'];
   if (!routes[route] && route.startsWith('/settings')) {
     await renderSettings(route);
@@ -268,8 +288,13 @@ async function renderSettings(route = '/settings') {
       </div>
       <div class="card settings-card">
         <h3>Profile</h3>
-        <p>${escapeHTML(state.user.email)} · ${escapeHTML(state.user.timezone)}</p>
+        <p>${escapeHTML(state.user.email)} · ${escapeHTML(state.user.timezone)}${state.user.is_admin ? ' · <span class="badge badge-admin">Admin</span>' : ''}</p>
       </div>
+      ${state.user.is_admin ? `
+      <div class="card settings-card" data-href="#/admin">
+        <h3>Admin panel</h3>
+        <p>Manage users, reminders, and sessions.</p>
+      </div>` : ''}
       <div class="card settings-card">
         <h3>Data export / import</h3>
         <p>JSON backup — coming in next release.</p>
@@ -282,8 +307,10 @@ async function renderSettings(route = '/settings') {
   `;
   document.getElementById('app').innerHTML = shellHTML('/settings', main);
   bindShell('/settings');
-  document.querySelector('[data-href]')?.addEventListener('click', () => {
-    location.hash = '#/settings/vacation';
+  document.querySelectorAll('[data-href]').forEach((el) => {
+    el.addEventListener('click', () => {
+      location.hash = el.dataset.href;
+    });
   });
 }
 

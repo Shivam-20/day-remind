@@ -286,6 +286,103 @@ button, input, select, textarea { font: inherit; }
 .settings-card h3 { margin: 0 0 6px; font-size: 1rem; }
 .settings-card p { margin: 0; color: var(--text-2); font-size: 0.85rem; }
 
+.admin-badge {
+  margin: 0 16px 8px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  font-weight: 700;
+}
+.admin-nav {
+  padding: 0 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.admin-nav a {
+  display: block;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+}
+.admin-nav a.active,
+.admin-nav a:hover {
+  background: var(--accent-soft);
+  color: var(--text-1);
+}
+.admin-page { max-width: 1200px; }
+.admin-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.admin-user-label {
+  font-size: 0.85rem;
+  color: var(--text-2);
+}
+.admin-filters { margin-bottom: 16px; }
+.admin-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.admin-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+.table-wrap { padding: 0; overflow-x: auto; }
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.data-table th,
+.data-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.data-table th {
+  color: var(--text-2);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--surface-2);
+}
+.data-table tbody tr:last-child td { border-bottom: none; }
+.data-table tbody tr:hover { background: var(--surface-2); }
+.table-empty {
+  text-align: center;
+  color: var(--text-2);
+  padding: 32px 16px !important;
+}
+.cell-primary { font-weight: 600; }
+.cell-secondary { font-size: 0.8rem; color: var(--text-3); margin-top: 2px; }
+.mono-cell { font-family: var(--mono); font-size: 0.8rem; color: var(--text-2); }
+.table-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 180px;
+}
+.badge-admin {
+  background: var(--info-soft);
+  color: var(--info);
+}
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.checkbox-label input { width: auto; }
+
 @media (max-width: 768px) {
   .layout { grid-template-columns: 1fr; }
   .sidebar { display: none; }
