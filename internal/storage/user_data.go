@@ -70,36 +70,6 @@ type DigestUser struct {
 	NotificationPrefs []NotificationPref
 }
 
-type listDoc struct {
-	ID     uuid.UUID `bson:"_id"`
-	UserID uuid.UUID `bson:"user_id"`
-	Name   string    `bson:"name"`
-	Color  string    `bson:"color"`
-	Paused bool      `bson:"paused"`
-}
-
-type tagDoc struct {
-	ID     uuid.UUID `bson:"_id"`
-	UserID uuid.UUID `bson:"user_id"`
-	Name   string    `bson:"name"`
-}
-
-type subtaskDoc struct {
-	ID         uuid.UUID `bson:"_id"`
-	ReminderID uuid.UUID `bson:"reminder_id"`
-	UserID     uuid.UUID `bson:"user_id"`
-	Title      string    `bson:"title"`
-	Done       bool      `bson:"done"`
-	Sort       int       `bson:"sort"`
-}
-
-type offsetDoc struct {
-	ID            uuid.UUID `bson:"_id"`
-	ReminderID    uuid.UUID `bson:"reminder_id"`
-	UserID        uuid.UUID `bson:"user_id"`
-	OffsetMinutes int       `bson:"offset_minutes"`
-}
-
 type exportReminderDoc struct {
 	reminderDoc
 	RecurrenceRule   string          `bson:"recurrence_rule,omitempty"`
@@ -205,7 +175,7 @@ func (db *DB) ListUserReminderRecords(ctx context.Context, userID uuid.UUID) ([]
 
 func (db *DB) listSubtasksForReminder(ctx context.Context, userID, reminderID uuid.UUID) ([]SubtaskRecord, error) {
 	cur, err := db.collection("subtasks").Find(ctx, bson.M{"user_id": userID, "reminder_id": reminderID},
-		options.Find().SetSort(bson.D{{Key: "sort", Value: 1}}))
+		options.Find().SetSort(bson.D{{Key: "sort_order", Value: 1}}))
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +186,7 @@ func (db *DB) listSubtasksForReminder(ctx context.Context, userID, reminderID uu
 		if err := cur.Decode(&doc); err != nil {
 			return nil, err
 		}
-		out = append(out, SubtaskRecord{ID: doc.ID, Title: doc.Title, Done: doc.Done, Sort: doc.Sort})
+		out = append(out, SubtaskRecord{ID: doc.ID, Title: doc.Title, Done: doc.Done, Sort: doc.SortOrder})
 	}
 	return out, cur.Err()
 }
@@ -301,9 +271,18 @@ func (db *DB) DeleteUserExportData(ctx context.Context, userID uuid.UUID) error 
 
 // UpsertListRecord inserts or updates a list during import.
 func (db *DB) UpsertListRecord(ctx context.Context, userID uuid.UUID, rec ListRecord) error {
-	doc := listDoc{ID: rec.ID, UserID: userID, Name: rec.Name, Color: rec.Color, Paused: rec.Paused}
+	now := time.Now().UTC()
+	doc := listDoc{
+		ID:        rec.ID,
+		UserID:    userID,
+		Name:      rec.Name,
+		Color:     rec.Color,
+		Paused:    rec.Paused,
+		UpdatedAt: now,
+	}
 	_, err := db.collection("lists").UpdateOne(ctx, bson.M{"_id": rec.ID, "user_id": userID},
-		bson.M{"$set": doc}, options.Update().SetUpsert(true))
+		bson.M{"$set": doc, "$setOnInsert": bson.M{"created_at": now}},
+		options.Update().SetUpsert(true))
 	return err
 }
 
@@ -353,7 +332,7 @@ func (db *DB) UpsertReminderRecord(ctx context.Context, userID uuid.UUID, rec Re
 			UserID:     userID,
 			Title:      st.Title,
 			Done:       st.Done,
-			Sort:       st.Sort,
+			SortOrder:  st.Sort,
 		}
 		if stDoc.ID == uuid.Nil {
 			stDoc.ID = uuid.New()
@@ -369,6 +348,8 @@ func (db *DB) UpsertReminderRecord(ctx context.Context, userID uuid.UUID, rec Re
 			ReminderID:    rec.ID,
 			UserID:        userID,
 			OffsetMinutes: off.OffsetMinutes,
+			CreatedAt:     now,
+			UpdatedAt:     now,
 		}
 		if _, err := db.collection("reminder_offsets").InsertOne(ctx, offDoc); err != nil {
 			return err

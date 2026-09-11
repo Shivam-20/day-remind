@@ -47,6 +47,7 @@ type UserNotifyState struct {
 	QuietStart               string
 	QuietEnd                 string
 	Prefs                    []NotificationPref
+	EscalationOrder          []string
 }
 
 func (db *DB) GetUserNotifyState(ctx context.Context, userID uuid.UUID) (UserNotifyState, error) {
@@ -59,11 +60,16 @@ func (db *DB) GetUserNotifyState(ctx context.Context, userID uuid.UUID) (UserNot
 		return UserNotifyState{}, err
 	}
 	prefs := normalizeUserPrefs(doc.Email, doc.NotificationPrefs)
+	escalation := doc.EscalationOrder
+	if len(escalation) == 0 {
+		escalation = defaultEscalationOrder()
+	}
 	return UserNotifyState{
 		NotificationsPaused:      doc.NotificationsPaused,
 		NotificationsPausedUntil: doc.NotificationsPausedUntil,
 		QuietStart:               doc.QuietStart,
 		QuietEnd:                 doc.QuietEnd,
 		Prefs:                    prefs,
+		EscalationOrder:          escalation,
 	}, nil
 }

@@ -6,8 +6,10 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/shivam-20/day-remind/internal/config"
+	"github.com/shivam-20/day-remind/internal/jobs"
 	"github.com/shivam-20/day-remind/internal/scheduler"
 	"github.com/shivam-20/day-remind/internal/storage"
 	"github.com/shivam-20/day-remind/internal/web"
@@ -30,6 +32,8 @@ func main() {
 	sched := scheduler.New(db, cfg)
 	go sched.Run(ctx)
 
+	go runMorningDigests(ctx, db, cfg)
+
 	srv := web.New(cfg, db)
 	go func() {
 		if err := srv.ListenAndServe(); err != nil {
@@ -40,4 +44,19 @@ func main() {
 
 	<-ctx.Done()
 	log.Println("shutting down")
+}
+
+func runMorningDigests(ctx context.Context, db *storage.DB, cfg config.Config) {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		if err := jobs.RunMorningDigests(ctx, db, cfg); err != nil {
+			log.Printf("digest job: %v", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }

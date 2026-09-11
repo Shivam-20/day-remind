@@ -3,8 +3,10 @@ package web
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
+	"github.com/shivam-20/day-remind/internal/storage"
 )
 
 type contextKey string
@@ -24,6 +26,32 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), userIDKey, userID)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func (s *Server) requireAPIKey(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+		if !strings.HasPrefix(token, "dr_") {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		user, err := s.db.GetUserByAPIKeyHash(r.Context(), storage.HashAPIKeyToken(token))
+		if err == storage.ErrNotFound {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not authenticate")
+			return
+		}
+		ctx := context.WithValue(r.Context(), userIDKey, user.ID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

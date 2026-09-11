@@ -2,6 +2,7 @@ package importdata
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -115,6 +116,37 @@ func parseICalTime(raw string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("invalid ical datetime: %q", raw)
+}
+
+// ImportICal parses an iCalendar file and creates reminders for the user.
+func ImportICal(ctx context.Context, db *storage.DB, userID uuid.UUID, raw []byte) (int, error) {
+	records, err := ParseICal(strings.NewReader(string(raw)))
+	if err != nil {
+		return 0, err
+	}
+	imported := 0
+	for _, rec := range records {
+		exists, err := db.ReminderExists(ctx, userID, rec.ID)
+		if err != nil {
+			return imported, err
+		}
+		if exists {
+			continue
+		}
+		_, err = db.CreateReminder(ctx, userID, reminder.CreateInput{
+			Title:          rec.Title,
+			Description:    rec.Description,
+			DueAt:          rec.DueAt,
+			Timezone:       rec.Timezone,
+			Priority:       rec.Priority,
+			RecurrenceRule: rec.RecurrenceRule,
+		})
+		if err != nil {
+			return imported, err
+		}
+		imported++
+	}
+	return imported, nil
 }
 
 func icalUnescape(s string) string {

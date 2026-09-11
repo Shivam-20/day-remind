@@ -7,20 +7,24 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/shivam-20/day-remind/internal/config"
+	"github.com/shivam-20/day-remind/internal/jobs"
 	"github.com/shivam-20/day-remind/internal/notify"
 	"github.com/shivam-20/day-remind/internal/reminder"
 	"github.com/shivam-20/day-remind/internal/storage"
 )
 
 type Scheduler struct {
-	db       *storage.DB
-	cfg      config.Config
-	interval time.Duration
+	db              *storage.DB
+	cfg             config.Config
+	interval        time.Duration
+	lastDigestHour  int
+	lastDigestDay   int
 }
 
 func New(db *storage.DB, cfg config.Config) *Scheduler {
-	return &Scheduler{db: db, cfg: cfg, interval: 30 * time.Second}
+	return &Scheduler{db: db, cfg: cfg, interval: 30 * time.Second, lastDigestHour: -1}
 }
 
 func (s *Scheduler) Run(ctx context.Context) {
@@ -45,6 +49,15 @@ func (s *Scheduler) tick(ctx context.Context, now time.Time) {
 		return
 	}
 	s.processRetries(ctx, deliveryCfg)
+	s.maybeRunDigests(ctx, now)
+	occurrences, err := s.db.ListDueOccurrences(ctx, now, 100)
+	if err != nil {
+		log.Printf("scheduler: list due occurrences: %v", err)
+	} else {
+		for _, occ := range occurrences {
+			s.dispatchOccurrence(ctx, occ, deliveryCfg, now)
+		}
+	}
 	items, err := s.db.ListDueReminders(ctx, now, 100)
 	if err != nil {
 		log.Printf("scheduler: list due: %v", err)
@@ -52,6 +65,19 @@ func (s *Scheduler) tick(ctx context.Context, now time.Time) {
 	}
 	for _, item := range items {
 		s.dispatchReminder(ctx, item, deliveryCfg, now)
+	}
+}
+
+func (s *Scheduler) maybeRunDigests(ctx context.Context, now time.Time) {
+	hour := now.Hour()
+	day := now.YearDay()
+	if s.lastDigestHour == hour && s.lastDigestDay == day {
+		return
+	}
+	s.lastDigestHour = hour
+	s.lastDigestDay = day
+	if err := jobs.RunMorningDigests(ctx, s.db, s.cfg); err != nil {
+		log.Printf("scheduler: morning digests: %v", err)
 	}
 }
 
@@ -74,7 +100,30 @@ func (s *Scheduler) processRetries(ctx context.Context, deliveryCfg notify.Deliv
 	}
 }
 
-func (s *Scheduler) dispatchReminder(ctx context.Context, item reminder.Reminder, deliveryCfg notify.DeliveryConfig, now time.Time) {
+func (s *Scheduler) reminderListPaused(ctx context.Context, item reminder.Reminder) bool {
+	if item.ListID == nil {
+		return false
+	}
+	list, err := s.db.GetListByID(ctx, item.UserID, *item.ListID)
+	if err != nil {
+		return false
+	}
+	return list.Paused
+}
+
+func (s *Scheduler) dispatchOccurrence(ctx context.Context, occ storage.ReminderOccurrence, deliveryCfg notify.DeliveryConfig, now time.Time) {
+	item, err := s.db.GetReminder(ctx, occ.UserID, occ.ReminderID)
+	if err != nil {
+		_ = s.db.MarkOccurrenceFired(ctx, occ.ID)
+		return
+	}
+	if item.Status != reminder.StatusScheduled {
+		_ = s.db.MarkOccurrenceFired(ctx, occ.ID)
+		return
+	}
+	if s.reminderListPaused(ctx, item) {
+		return
+	}
 	state, err := s.db.GetUserNotifyState(ctx, item.UserID)
 	if err != nil {
 		return
@@ -85,16 +134,44 @@ func (s *Scheduler) dispatchReminder(ctx context.Context, item reminder.Reminder
 	if inQuietHours(state, item, now) {
 		return
 	}
+	prefix := occurrencePrefix(occ)
+	s.deliverToChannels(ctx, item, state, deliveryCfg, item.DueAt, prefix)
+	_ = s.db.MarkOccurrenceFired(ctx, occ.ID)
+}
+
+func (s *Scheduler) dispatchReminder(ctx context.Context, item reminder.Reminder, deliveryCfg notify.DeliveryConfig, now time.Time) {
+	if s.reminderListPaused(ctx, item) {
+		return
+	}
+	state, err := s.db.GetUserNotifyState(ctx, item.UserID)
+	if err != nil {
+		return
+	}
+	if blockedByVacation(state, now) {
+		return
+	}
+	if inQuietHours(state, item, now) {
+		return
+	}
+	s.deliverToChannels(ctx, item, state, deliveryCfg, item.DueAt, "🔔 Now:")
+}
+
+func (s *Scheduler) deliverToChannels(ctx context.Context, item reminder.Reminder, state storage.UserNotifyState, deliveryCfg notify.DeliveryConfig, dueAt time.Time, prefix string) {
 	avail := notify.ChannelAvailability(deliveryCfg)
-	for _, pref := range state.Prefs {
-		if !pref.Enabled || !avail[pref.Channel] || strings.TrimSpace(pref.Address) == "" {
+	channels := orderedChannels(state, avail)
+	if len(channels) == 0 {
+		return
+	}
+	for _, ch := range channels {
+		pref := prefForChannel(state.Prefs, ch)
+		if pref == nil {
 			continue
 		}
-		key := storage.DeliveryIdempotencyKey(item.ID, pref.Channel, item.DueAt)
+		key := storage.DeliveryIdempotencyKey(item.ID, ch, dueAt)
 		d, err := s.db.CreateDelivery(ctx, storage.Delivery{
 			ReminderID:     item.ID,
 			UserID:         item.UserID,
-			Channel:        pref.Channel,
+			Channel:        ch,
 			Status:         storage.DeliveryStatusPending,
 			IdempotencyKey: key,
 		})
@@ -105,8 +182,39 @@ func (s *Scheduler) dispatchReminder(ctx context.Context, item reminder.Reminder
 			log.Printf("scheduler: create delivery: %v", err)
 			continue
 		}
-		s.sendDelivery(ctx, d, item, pref, deliveryCfg)
+		if s.sendDelivery(ctx, d, item, *pref, deliveryCfg, prefix) {
+			return
+		}
 	}
+}
+
+func orderedChannels(state storage.UserNotifyState, avail map[string]bool) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, ch := range state.EscalationOrder {
+		if !avail[ch] || seen[ch] {
+			continue
+		}
+		seen[ch] = true
+		out = append(out, ch)
+	}
+	for _, pref := range state.Prefs {
+		if !pref.Enabled || !avail[pref.Channel] || strings.TrimSpace(pref.Address) == "" || seen[pref.Channel] {
+			continue
+		}
+		seen[pref.Channel] = true
+		out = append(out, pref.Channel)
+	}
+	return out
+}
+
+func prefForChannel(prefs []storage.NotificationPref, channel string) *storage.NotificationPref {
+	for _, p := range prefs {
+		if p.Channel == channel && p.Enabled && strings.TrimSpace(p.Address) != "" {
+			return &p
+		}
+	}
+	return nil
 }
 
 func (s *Scheduler) retryDelivery(ctx context.Context, d storage.Delivery, deliveryCfg notify.DeliveryConfig) {
@@ -125,14 +233,49 @@ func (s *Scheduler) retryDelivery(ctx context.Context, d storage.Delivery, deliv
 			break
 		}
 	}
-	s.sendDelivery(ctx, d, item, pref, deliveryCfg)
+	if !s.sendDelivery(ctx, d, item, pref, deliveryCfg, "🔔 Now:") {
+		s.tryEscalation(ctx, d, item, state, deliveryCfg)
+	}
 }
 
-func (s *Scheduler) sendDelivery(ctx context.Context, d storage.Delivery, item reminder.Reminder, pref storage.NotificationPref, deliveryCfg notify.DeliveryConfig) {
-	subject := fmt.Sprintf("Reminder: %s", item.Title)
+func (s *Scheduler) tryEscalation(ctx context.Context, failed storage.Delivery, item reminder.Reminder, state storage.UserNotifyState, deliveryCfg notify.DeliveryConfig) {
+	avail := notify.ChannelAvailability(deliveryCfg)
+	order := orderedChannels(state, avail)
+	idx := -1
+	for i, ch := range order {
+		if ch == failed.Channel {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 || idx+1 >= len(order) {
+		return
+	}
+	nextCh := order[idx+1]
+	pref := prefForChannel(state.Prefs, nextCh)
+	if pref == nil {
+		return
+	}
+	key := storage.DeliveryIdempotencyKey(item.ID, nextCh, item.DueAt) + ":esc"
+	d, err := s.db.CreateDelivery(ctx, storage.Delivery{
+		ReminderID:     item.ID,
+		UserID:         item.UserID,
+		Channel:        nextCh,
+		Status:         storage.DeliveryStatusPending,
+		IdempotencyKey: key,
+	})
+	if err != nil {
+		return
+	}
+	s.sendDelivery(ctx, d, item, *pref, deliveryCfg, "🔔 Now:")
+}
+
+// sendDelivery returns true on success.
+func (s *Scheduler) sendDelivery(ctx context.Context, d storage.Delivery, item reminder.Reminder, pref storage.NotificationPref, deliveryCfg notify.DeliveryConfig, prefix string) bool {
+	subject := fmt.Sprintf("%s %s", strings.TrimSpace(prefix), item.Title)
 	body := fmt.Sprintf("<p><strong>%s</strong></p><p>%s</p><p>Due: %s</p>",
 		escapeHTML(item.Title), escapeHTML(item.Description), item.DueAt.UTC().Format(time.RFC3339))
-	text := fmt.Sprintf("Reminder: %s\n%s\nDue: %s", item.Title, item.Description, item.DueAt.UTC().Format(time.RFC822))
+	text := fmt.Sprintf("%s %s\n%s\nDue: %s", strings.TrimSpace(prefix), item.Title, item.Description, item.DueAt.UTC().Format(time.RFC822))
 
 	var err error
 	switch d.Channel {
@@ -140,14 +283,60 @@ func (s *Scheduler) sendDelivery(ctx context.Context, d storage.Delivery, item r
 		err = notify.SendEmail(ctx, deliveryCfg, pref.Address, subject, body)
 	case storage.ChannelTelegram:
 		err = notify.SendTelegram(ctx, deliveryCfg, pref.Address, text)
+	case storage.ChannelWebPush:
+		err = notify.SendWebPush(ctx, deliveryCfg, pref.Address, subject, text)
+	case storage.ChannelSMS:
+		err = notify.SendSMS(ctx, notify.SMSConfig{
+			AccountSID: deliveryCfg.TwilioAccountSID,
+			AuthToken:  deliveryCfg.TwilioAuthToken,
+			From:       deliveryCfg.TwilioFrom,
+		}, pref.Address, text)
+	case storage.ChannelSlack:
+		err = notify.SendSlack(ctx, pref.Address, text)
 	default:
 		err = fmt.Errorf("unknown channel")
 	}
 	if err != nil {
 		_ = s.db.MarkDeliveryFailed(ctx, d.ID, err.Error())
-		return
+		return false
 	}
 	_ = s.db.MarkDeliverySent(ctx, d.ID)
+	return true
+}
+
+func occurrencePrefix(occ storage.ReminderOccurrence) string {
+	if occ.Kind == storage.OccurrenceKindOffset && occ.OffsetMinutes > 0 {
+		return formatOffsetPrefix(occ.OffsetMinutes)
+	}
+	return "🔔 Now:"
+}
+
+func formatOffsetPrefix(minutes int) string {
+	if minutes >= 10080 && minutes%10080 == 0 {
+		w := minutes / 10080
+		if w == 1 {
+			return "⏰ In 1 week:"
+		}
+		return fmt.Sprintf("⏰ In %d weeks:", w)
+	}
+	if minutes >= 1440 && minutes%1440 == 0 {
+		d := minutes / 1440
+		if d == 1 {
+			return "⏰ In 1 day:"
+		}
+		return fmt.Sprintf("⏰ In %d days:", d)
+	}
+	if minutes >= 60 && minutes%60 == 0 {
+		h := minutes / 60
+		if h == 1 {
+			return "⏰ In 1 hour:"
+		}
+		return fmt.Sprintf("⏰ In %d hours:", h)
+	}
+	if minutes == 1 {
+		return "⏰ In 1 minute:"
+	}
+	return fmt.Sprintf("⏰ In %d minutes:", minutes)
 }
 
 func blockedByVacation(state storage.UserNotifyState, now time.Time) bool {
@@ -207,4 +396,22 @@ func parseClock(raw string) (hour, min int) {
 
 func escapeHTML(s string) string {
 	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)
+}
+
+// ScheduleNextRecurrenceIfNeeded is called when a reminder is marked done.
+func ScheduleNextRecurrenceIfNeeded(ctx context.Context, db *storage.DB, userID, reminderID uuid.UUID) {
+	item, err := db.GetReminder(ctx, userID, reminderID)
+	if err != nil || strings.TrimSpace(item.RecurrenceRule) == "" {
+		return
+	}
+	if _, err := db.ScheduleNextRecurrence(ctx, userID, item); err != nil {
+		log.Printf("scheduler: schedule next recurrence %s: %v", reminderID, err)
+	}
+}
+
+// MaterializeReminderOccurrences materializes occurrence rows after reminder creation.
+func MaterializeReminderOccurrences(ctx context.Context, db *storage.DB, userID uuid.UUID, item reminder.Reminder) {
+	if err := db.MaterializeOccurrencesForReminder(ctx, userID, item); err != nil {
+		log.Printf("scheduler: materialize occurrences %s: %v", item.ID, err)
+	}
 }

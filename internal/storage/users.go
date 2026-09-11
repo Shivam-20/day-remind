@@ -66,9 +66,9 @@ type userDoc struct {
 	IsAdmin                  bool                  `bson:"is_admin"`
 	QuietStart               string                `bson:"quiet_start,omitempty"`
 	QuietEnd                 string                `bson:"quiet_end,omitempty"`
-	NotificationPrefs        []notificationPrefDoc `bson:"notification_prefs"`
 	MorningDigestEnabled     bool                  `bson:"morning_digest_enabled"`
 	MorningDigestTime        string                `bson:"morning_digest_time,omitempty"`
+	NotificationPrefs        []notificationPrefDoc `bson:"notification_prefs"`
 	EmailIngestToken         string                `bson:"email_ingest_token,omitempty"`
 	EscalationOrder          []string              `bson:"escalation_order,omitempty"`
 	TOTPSecret               string                `bson:"totp_secret,omitempty"`

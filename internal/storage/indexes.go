@@ -58,6 +58,109 @@ func ensureIndexes(ctx context.Context, db *mongo.Database) error {
 					},
 					Options: options.Index(),
 				},
+				{
+					Keys: bson.D{
+						{Key: "user_id", Value: 1},
+						{Key: "list_id", Value: 1},
+					},
+					Options: options.Index(),
+				},
+				{
+					Keys: bson.D{
+						{Key: "user_id", Value: 1},
+						{Key: "tag_ids", Value: 1},
+					},
+					Options: options.Index(),
+				},
+				{
+					Keys: bson.D{
+						{Key: "user_id", Value: 1},
+						{Key: "priority", Value: 1},
+					},
+					Options: options.Index(),
+				},
+			},
+		},
+		{
+			collection: "lists",
+			indexes: []mongo.IndexModel{
+				{
+					Keys: bson.D{
+						{Key: "user_id", Value: 1},
+						{Key: "sort_order", Value: 1},
+					},
+					Options: options.Index(),
+				},
+			},
+		},
+		{
+			collection: "tags",
+			indexes: []mongo.IndexModel{
+				{
+					Keys: bson.D{
+						{Key: "user_id", Value: 1},
+						{Key: "name", Value: 1},
+					},
+					Options: options.Index().SetUnique(true),
+				},
+			},
+		},
+		{
+			collection: "subtasks",
+			indexes: []mongo.IndexModel{
+				{
+					Keys: bson.D{
+						{Key: "reminder_id", Value: 1},
+						{Key: "sort_order", Value: 1},
+					},
+					Options: options.Index(),
+				},
+				{
+					Keys: bson.D{
+						{Key: "user_id", Value: 1},
+						{Key: "reminder_id", Value: 1},
+					},
+					Options: options.Index(),
+				},
+			},
+		},
+		{
+			collection: "reminder_offsets",
+			indexes: []mongo.IndexModel{
+				{
+					Keys: bson.D{
+						{Key: "reminder_id", Value: 1},
+						{Key: "offset_minutes", Value: -1},
+					},
+					Options: options.Index(),
+				},
+				{
+					Keys: bson.D{
+						{Key: "user_id", Value: 1},
+						{Key: "reminder_id", Value: 1},
+					},
+					Options: options.Index(),
+				},
+			},
+		},
+		{
+			collection: "reminder_occurrences",
+			indexes: []mongo.IndexModel{
+				{
+					Keys: bson.D{
+						{Key: "fired", Value: 1},
+						{Key: "fire_at", Value: 1},
+					},
+					Options: options.Index(),
+				},
+				{
+					Keys: bson.D{
+						{Key: "user_id", Value: 1},
+						{Key: "reminder_id", Value: 1},
+						{Key: "fire_at", Value: 1},
+					},
+					Options: options.Index(),
+				},
 			},
 		},
 		{

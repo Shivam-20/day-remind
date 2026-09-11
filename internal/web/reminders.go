@@ -10,13 +10,22 @@ import (
 	"github.com/shivam-20/day-remind/internal/storage"
 )
 
+type offsetInput struct {
+	OffsetMinutes   int    `json:"offset_minutes"`
+	ChannelOverride string `json:"channel_override"`
+}
+
 type createReminderRequest struct {
-	Title       string  `json:"title"`
-	Description string  `json:"description"`
-	DueAt       string  `json:"due_at"`
-	Timezone    string  `json:"timezone"`
-	Priority    string  `json:"priority"`
-	ListID      *string `json:"list_id"`
+	Title              string            `json:"title"`
+	Description        string            `json:"description"`
+	DueAt              string            `json:"due_at"`
+	Timezone           string            `json:"timezone"`
+	Priority           string            `json:"priority"`
+	ListID             *string           `json:"list_id"`
+	TagIDs             []string          `json:"tag_ids"`
+	RecurrenceRule     string            `json:"recurrence_rule"`
+	ChannelOverrides   map[string]bool   `json:"channel_overrides"`
+	Offsets            []offsetInput     `json:"offsets"`
 }
 
 type snoozeRequest struct {
@@ -26,7 +35,12 @@ type snoozeRequest struct {
 
 func (s *Server) handleListReminders(w http.ResponseWriter, r *http.Request) {
 	userID := userIDFromContext(r.Context())
-	f := reminder.ListFilter{UserID: userID, Status: r.URL.Query().Get("status"), Query: r.URL.Query().Get("q")}
+	f := reminder.ListFilter{
+		UserID:   userID,
+		Status:   r.URL.Query().Get("status"),
+		Query:    r.URL.Query().Get("q"),
+		Priority: r.URL.Query().Get("priority"),
+	}
 	if raw := r.URL.Query().Get("from"); raw != "" {
 		t, err := time.Parse(time.RFC3339, raw)
 		if err == nil {
@@ -37,6 +51,18 @@ func (s *Server) handleListReminders(w http.ResponseWriter, r *http.Request) {
 		t, err := time.Parse(time.RFC3339, raw)
 		if err == nil {
 			f.To = &t
+		}
+	}
+	if raw := r.URL.Query().Get("list_id"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err == nil {
+			f.ListID = &id
+		}
+	}
+	if raw := r.URL.Query().Get("tag"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err == nil {
+			f.TagID = &id
 		}
 	}
 	items, err := s.db.ListReminders(r.Context(), f)
@@ -63,12 +89,20 @@ func (s *Server) handleCreateReminder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "due_at must be RFC3339")
 		return
 	}
+	tagIDs, err := parseTagIDs(body.TagIDs)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid tag_ids")
+		return
+	}
 	in := reminder.CreateInput{
-		Title:       body.Title,
-		Description: body.Description,
-		DueAt:       dueAt,
-		Timezone:    body.Timezone,
-		Priority:    body.Priority,
+		Title:            body.Title,
+		Description:      body.Description,
+		DueAt:            dueAt,
+		Timezone:         body.Timezone,
+		Priority:         body.Priority,
+		TagIDs:           tagIDs,
+		RecurrenceRule:   body.RecurrenceRule,
+		ChannelOverrides: body.ChannelOverrides,
 	}
 	if body.ListID != nil && *body.ListID != "" {
 		id, err := uuid.Parse(*body.ListID)
@@ -83,6 +117,11 @@ func (s *Server) handleCreateReminder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := s.applyReminderOffsets(r, userID, item.ID, body.Offsets); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	item, _ = s.db.GetReminder(r.Context(), userID, item.ID)
 	writeJSON(w, http.StatusCreated, reminderPayload(item))
 }
 
@@ -131,6 +170,20 @@ func (s *Server) handleUpdateReminder(w http.ResponseWriter, r *http.Request) {
 		}
 		in.DueAt = &dueAt
 	}
+	if body.TagIDs != nil {
+		tagIDs, err := parseTagIDs(body.TagIDs)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid tag_ids")
+			return
+		}
+		in.TagIDs = &tagIDs
+	}
+	if body.RecurrenceRule != "" {
+		in.RecurrenceRule = &body.RecurrenceRule
+	}
+	if body.ChannelOverrides != nil {
+		in.ChannelOverrides = &body.ChannelOverrides
+	}
 	item, err := s.db.UpdateReminder(r.Context(), userID, id, in)
 	if err == storage.ErrNotFound {
 		writeError(w, http.StatusNotFound, "not found")
@@ -140,6 +193,13 @@ func (s *Server) handleUpdateReminder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if body.Offsets != nil {
+		if err := s.replaceReminderOffsets(r, userID, id, body.Offsets); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	item, _ = s.db.GetReminder(r.Context(), userID, id)
 	writeJSON(w, http.StatusOK, reminderPayload(item))
 }
 
@@ -287,21 +347,65 @@ func (s *Server) handleSnoozePresets(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"presets": reminder.SnoozePresets()})
 }
 
+func (s *Server) applyReminderOffsets(r *http.Request, userID, reminderID uuid.UUID, offsets []offsetInput) error {
+	for _, off := range offsets {
+		if _, err := s.db.CreateOffset(r.Context(), userID, reminderID, storage.OffsetCreateInput{
+			OffsetMinutes:   off.OffsetMinutes,
+			ChannelOverride: off.ChannelOverride,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Server) replaceReminderOffsets(r *http.Request, userID, reminderID uuid.UUID, offsets []offsetInput) error {
+	current, err := s.db.ListOffsetsForReminder(r.Context(), userID, reminderID)
+	if err != nil {
+		return err
+	}
+	for _, off := range current {
+		if err := s.db.DeleteOffset(r.Context(), userID, off.ID); err != nil {
+			return err
+		}
+	}
+	return s.applyReminderOffsets(r, userID, reminderID, offsets)
+}
+
 func reminderPayload(r reminder.Reminder) map[string]any {
 	out := map[string]any{
-		"id":          r.ID.String(),
-		"title":       r.Title,
-		"description": r.Description,
-		"due_at":      r.DueAt.UTC().Format(time.RFC3339),
-		"timezone":    r.Timezone,
-		"status":      r.Status,
-		"priority":    r.Priority,
-		"pinned":      r.Pinned,
-		"created_at":  r.CreatedAt.UTC().Format(time.RFC3339),
-		"updated_at":  r.UpdatedAt.UTC().Format(time.RFC3339),
+		"id":                   r.ID.String(),
+		"title":                r.Title,
+		"description":          r.Description,
+		"due_at":               r.DueAt.UTC().Format(time.RFC3339),
+		"timezone":             r.Timezone,
+		"status":               r.Status,
+		"priority":             r.Priority,
+		"pinned":               r.Pinned,
+		"tag_ids":              uuidStrings(r.TagIDs),
+		"recurrence_rule":      r.RecurrenceRule,
+		"channel_overrides":    r.ChannelOverrides,
+		"require_all_subtasks": r.RequireAllSubtasks,
+		"created_at":           r.CreatedAt.UTC().Format(time.RFC3339),
+		"updated_at":           r.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 	if r.ListID != nil {
 		out["list_id"] = r.ListID.String()
+	}
+	if r.SeriesID != nil {
+		out["series_id"] = r.SeriesID.String()
+	}
+	if r.RecurrenceUntil != nil {
+		out["recurrence_until"] = r.RecurrenceUntil.UTC().Format(time.RFC3339)
+	}
+	if r.AssigneeID != nil {
+		out["assignee_id"] = r.AssigneeID.String()
+	}
+	if r.GroupID != nil {
+		out["group_id"] = r.GroupID.String()
+	}
+	if r.AttachmentURL != "" {
+		out["attachment_url"] = r.AttachmentURL
 	}
 	if r.SnoozedUntil != nil {
 		out["snoozed_until"] = r.SnoozedUntil.UTC().Format(time.RFC3339)
