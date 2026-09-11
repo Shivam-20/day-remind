@@ -33,11 +33,15 @@ go build -o bin/day-remind ./cmd/server
 
 MongoDB runs on port **27017** (see `docker-compose.yml`).
 
-<<<<<<< HEAD
-Set `ADMIN_EMAILS` in `.env` (comma-separated) to grant admin access. Admins use `/api/admin/*` routes while logged in.
-=======
 Set `ADMIN_EMAILS` in `.env` (comma-separated) to grant admin access. Admins see an **Admin** link in the sidebar and can open `#/admin` for the management panel.
->>>>>>> cursor/admin-controller-4e42
+
+## Admin panel UI
+
+| Route | Features |
+|-------|----------|
+| `#/admin` | Dashboard stats |
+| `#/admin/users` | Search, create, edit, delete users; revoke sessions |
+| `#/admin/reminders` | Filter, create, done/pause/resume/delete across all users |
 
 ## Admin API (session + admin role)
 
@@ -67,6 +71,7 @@ Set `ADMIN_EMAILS` in `.env` (comma-separated) to grant admin access. Admins see
 - [x] Reminder CRUD + pause/resume/snooze/done
 - [x] Vacation mode (pause all notifications)
 - [x] Embedded web UI (Today, All, Settings, create drawer)
+- [x] Admin panel UI (users, reminders, dashboard)
 - [ ] Email/Telegram delivery (Phase 2)
 - [ ] JSON import/export UI (Phase 8)
 - [ ] Google/Gmail sync (Phase 11)
