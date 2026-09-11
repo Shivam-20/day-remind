@@ -149,6 +149,7 @@ func userPayload(u storage.User) map[string]any {
 		"display_name":         u.DisplayName,
 		"timezone":             u.Timezone,
 		"locale":               u.Locale,
+		"is_admin":             u.IsAdmin,
 		"notifications_paused": u.NotificationsPaused,
 	}
 	if u.NotificationsPausedUntil != nil {

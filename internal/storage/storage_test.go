@@ -15,7 +15,7 @@ func testDB(t *testing.T) *DB {
 	if url == "" {
 		t.Skip("DATABASE_URL not set")
 	}
-	db, err := Open(url)
+	db, err := Open(url, nil)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

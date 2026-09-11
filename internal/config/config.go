@@ -11,6 +11,7 @@ type Config struct {
 	DatabaseURL string
 	WebPort     int
 	SessionKey  string
+	AdminEmails []string
 }
 
 func Load() (Config, error) {
@@ -34,5 +35,18 @@ func Load() (Config, error) {
 		DatabaseURL: dbURL,
 		WebPort:     port,
 		SessionKey:  sessionKey,
+		AdminEmails: parseList(os.Getenv("ADMIN_EMAILS")),
 	}, nil
+}
+
+func parseList(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }

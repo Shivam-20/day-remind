@@ -33,3 +33,4 @@ day-remind/
 - Static UI is `//go:embed` — rebuild after `internal/web/static/` edits.
 - Session cookie: `dr_session`, HttpOnly.
 - Reminder status: `scheduled` | `paused` | `done` | `cancelled`.
+- Admin: set `ADMIN_EMAILS` (comma-separated); promoted on startup and signup. Admin routes under `/api/admin/*` (session + `is_admin` required).

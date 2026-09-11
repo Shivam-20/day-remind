@@ -33,6 +33,23 @@ go build -o bin/day-remind ./cmd/server
 
 MongoDB runs on port **27017** (see `docker-compose.yml`).
 
+Set `ADMIN_EMAILS` in `.env` (comma-separated) to grant admin access. Admins use `/api/admin/*` routes while logged in.
+
+## Admin API (session + admin role)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/admin/stats` | User/reminder/session counts |
+| GET/POST | `/api/admin/users` | List / create users |
+| GET/PATCH/DELETE | `/api/admin/users/{id}` | Get / update / delete user |
+| DELETE | `/api/admin/users/{id}/sessions` | Revoke all sessions |
+| GET/POST | `/api/admin/reminders` | List / create reminders (any user) |
+| GET/PATCH/DELETE | `/api/admin/reminders/{id}` | Get / update / delete reminder |
+| POST | `/api/admin/reminders/{id}/done` | Mark done |
+| POST | `/api/admin/reminders/{id}/pause` | Pause |
+| POST | `/api/admin/reminders/{id}/resume` | Resume |
+| POST | `/api/admin/reminders/{id}/snooze` | Snooze |
+
 ## Docs
 
 - Product design: [`docs/specs/2026-09-11-day-remind-design.md`](docs/specs/2026-09-11-day-remind-design.md)

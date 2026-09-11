@@ -22,9 +22,28 @@ type User struct {
 	DisplayName              string
 	Timezone                 string
 	Locale                   string
+	IsAdmin                  bool
 	NotificationsPaused      bool
 	NotificationsPausedUntil *time.Time
 	CreatedAt                time.Time
+	UpdatedAt                time.Time
+}
+
+type UserListFilter struct {
+	Query  string
+	Limit  int
+	Offset int
+}
+
+type AdminUserUpdate struct {
+	Email                    *string
+	DisplayName              *string
+	Timezone                 *string
+	Locale                   *string
+	IsAdmin                  *bool
+	NotificationsPaused      *bool
+	NotificationsPausedUntil *time.Time
+	PasswordHash             *string
 }
 
 type notificationPrefDoc struct {
@@ -42,6 +61,7 @@ type userDoc struct {
 	Locale                   string                `bson:"locale"`
 	NotificationsPaused      bool                  `bson:"notifications_paused"`
 	NotificationsPausedUntil *time.Time            `bson:"notifications_paused_until,omitempty"`
+	IsAdmin                  bool                  `bson:"is_admin"`
 	NotificationPrefs        []notificationPrefDoc `bson:"notification_prefs"`
 	CreatedAt                time.Time             `bson:"created_at"`
 	UpdatedAt                time.Time             `bson:"updated_at"`
@@ -55,9 +75,11 @@ func userFromDoc(doc userDoc) User {
 		DisplayName:              doc.DisplayName,
 		Timezone:                 doc.Timezone,
 		Locale:                   doc.Locale,
+		IsAdmin:                  doc.IsAdmin,
 		NotificationsPaused:      doc.NotificationsPaused,
 		NotificationsPausedUntil: doc.NotificationsPausedUntil,
 		CreatedAt:                doc.CreatedAt,
+		UpdatedAt:                doc.UpdatedAt,
 	}
 }
 
@@ -78,6 +100,7 @@ func (db *DB) CreateUser(ctx context.Context, email, passwordHash, displayName, 
 		DisplayName:  strings.TrimSpace(displayName),
 		Timezone:     timezone,
 		Locale:       "en",
+		IsAdmin:      db.isConfiguredAdmin(email),
 		NotificationPrefs: []notificationPrefDoc{
 			{Channel: "email", Enabled: true, Address: email},
 		},

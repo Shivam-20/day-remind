@@ -39,3 +39,15 @@ func sessionTokenFromRequest(r *http.Request) string {
 	}
 	return ""
 }
+
+func (s *Server) requireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		userID := userIDFromContext(r.Context())
+		user, err := s.db.GetUserByID(r.Context(), userID)
+		if err != nil || !user.IsAdmin {
+			writeError(w, http.StatusForbidden, "admin required")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
