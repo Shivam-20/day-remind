@@ -33,7 +33,7 @@ go build -o bin/day-remind ./cmd/server
 
 MongoDB runs on port **27017** (see `docker-compose.yml`).
 
-Set `ADMIN_EMAILS` in `.env` (comma-separated) to grant admin access. Admins use `/api/admin/*` routes while logged in.
+Set `ADMIN_EMAILS` in `.env` (comma-separated) to grant admin access. Admins see an **Admin** link in the sidebar and can open `#/admin` for the management panel.
 
 ## Admin API (session + admin role)
 
