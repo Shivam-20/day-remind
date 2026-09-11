@@ -15,6 +15,9 @@ import (
 const (
 	ChannelEmail    = "email"
 	ChannelTelegram = "telegram"
+	ChannelWebPush  = "webpush"
+	ChannelSMS      = "sms"
+	ChannelSlack    = "slack"
 )
 
 type NotificationPref struct {
