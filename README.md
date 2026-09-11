@@ -31,7 +31,7 @@ go test ./...
 go build -o bin/day-remind ./cmd/server
 ```
 
-Postgres runs on port **5433** (see `docker-compose.yml`).
+MongoDB runs on port **27017** (see `docker-compose.yml`).
 
 ## Docs
 
@@ -41,7 +41,7 @@ Postgres runs on port **5433** (see `docker-compose.yml`).
 
 ## MVP status (this branch)
 
-- [x] Postgres schema + migrations
+- [x] MongoDB collections + indexes
 - [x] Auth (signup, login, session cookie)
 - [x] Reminder CRUD + pause/resume/snooze/done
 - [x] Vacation mode (pause all notifications)

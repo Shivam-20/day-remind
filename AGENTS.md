@@ -22,7 +22,7 @@ day-remind/
 │   ├── auth/          # password hashing
 │   ├── config/
 │   ├── reminder/      # domain types
-│   ├── storage/       # postgres + migrations
+│   ├── storage/       # mongodb + indexes
 │   └── web/           # HTTP API + embedded static/
 └── docker-compose.yml
 ```

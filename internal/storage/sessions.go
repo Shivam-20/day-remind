@@ -3,25 +3,37 @@ package storage
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 const sessionTTL = 30 * 24 * time.Hour
+
+type sessionDoc struct {
+	Token     string    `bson:"_id"`
+	UserID    uuid.UUID `bson:"user_id"`
+	ExpiresAt time.Time `bson:"expires_at"`
+	CreatedAt time.Time `bson:"created_at"`
+}
 
 func (db *DB) CreateSession(ctx context.Context, userID uuid.UUID) (string, error) {
 	token, err := newSessionToken()
 	if err != nil {
 		return "", err
 	}
-	expires := time.Now().UTC().Add(sessionTTL)
-	_, err = db.SQL.ExecContext(ctx, `
-		INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)`,
-		token, userID, expires)
+	now := time.Now().UTC()
+	doc := sessionDoc{
+		Token:     token,
+		UserID:    userID,
+		ExpiresAt: now.Add(sessionTTL),
+		CreatedAt: now,
+	}
+	_, err = db.collection("sessions").InsertOne(ctx, doc)
 	if err != nil {
 		return "", err
 	}
@@ -29,26 +41,24 @@ func (db *DB) CreateSession(ctx context.Context, userID uuid.UUID) (string, erro
 }
 
 func (db *DB) DeleteSession(ctx context.Context, token string) error {
-	_, err := db.SQL.ExecContext(ctx, `DELETE FROM sessions WHERE token = $1`, token)
+	_, err := db.collection("sessions").DeleteOne(ctx, bson.M{"_id": token})
 	return err
 }
 
 func (db *DB) GetSessionUserID(ctx context.Context, token string) (uuid.UUID, error) {
-	var userID uuid.UUID
-	var expires time.Time
-	err := db.SQL.QueryRowContext(ctx, `
-		SELECT user_id, expires_at FROM sessions WHERE token = $1`, token).Scan(&userID, &expires)
-	if err == sql.ErrNoRows {
+	var doc sessionDoc
+	err := db.collection("sessions").FindOne(ctx, bson.M{"_id": token}).Decode(&doc)
+	if err == mongo.ErrNoDocuments {
 		return uuid.Nil, ErrNotFound
 	}
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if time.Now().UTC().After(expires) {
-		_, _ = db.SQL.ExecContext(ctx, `DELETE FROM sessions WHERE token = $1`, token)
+	if time.Now().UTC().After(doc.ExpiresAt) {
+		_, _ = db.collection("sessions").DeleteOne(ctx, bson.M{"_id": token})
 		return uuid.Nil, ErrNotFound
 	}
-	return userID, nil
+	return doc.UserID, nil
 }
 
 func newSessionToken() (string, error) {

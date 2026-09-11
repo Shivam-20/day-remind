@@ -2,14 +2,56 @@ package storage
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/shivam-20/day-remind/internal/reminder"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
+
+type reminderDoc struct {
+	ID           uuid.UUID  `bson:"_id"`
+	UserID       uuid.UUID  `bson:"user_id"`
+	ListID       *uuid.UUID `bson:"list_id,omitempty"`
+	Title        string     `bson:"title"`
+	Description  string     `bson:"description"`
+	DueAt        time.Time  `bson:"due_at"`
+	Timezone     string     `bson:"timezone"`
+	Status       string     `bson:"status"`
+	Priority     string     `bson:"priority"`
+	Pinned       bool       `bson:"pinned"`
+	SnoozedUntil *time.Time `bson:"snoozed_until,omitempty"`
+	PausedAt     *time.Time `bson:"paused_at,omitempty"`
+	ResumeAt     *time.Time `bson:"resume_at,omitempty"`
+	CompletedAt  *time.Time `bson:"completed_at,omitempty"`
+	CreatedAt    time.Time  `bson:"created_at"`
+	UpdatedAt    time.Time  `bson:"updated_at"`
+}
+
+func reminderFromDoc(doc reminderDoc) reminder.Reminder {
+	return reminder.Reminder{
+		ID:           doc.ID,
+		UserID:       doc.UserID,
+		ListID:       doc.ListID,
+		Title:        doc.Title,
+		Description:  doc.Description,
+		DueAt:        doc.DueAt,
+		Timezone:     doc.Timezone,
+		Status:       doc.Status,
+		Priority:     doc.Priority,
+		Pinned:       doc.Pinned,
+		SnoozedUntil: doc.SnoozedUntil,
+		PausedAt:     doc.PausedAt,
+		ResumeAt:     doc.ResumeAt,
+		CompletedAt:  doc.CompletedAt,
+		CreatedAt:    doc.CreatedAt,
+		UpdatedAt:    doc.UpdatedAt,
+	}
+}
 
 func (db *DB) CreateReminder(ctx context.Context, userID uuid.UUID, in reminder.CreateInput) (reminder.Reminder, error) {
 	title := strings.TrimSpace(in.Title)
@@ -27,24 +69,37 @@ func (db *DB) CreateReminder(ctx context.Context, userID uuid.UUID, in reminder.
 	if tz == "" {
 		tz = "Asia/Kolkata"
 	}
-	id := uuid.New()
 	now := time.Now().UTC()
-	_, err := db.SQL.ExecContext(ctx, `
-		INSERT INTO reminders (
-			id, user_id, list_id, title, description, due_at, timezone,
-			status, priority, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)`,
-		id, userID, in.ListID, title, strings.TrimSpace(in.Description), in.DueAt.UTC(), tz,
-		reminder.StatusScheduled, priority, now,
-	)
+	doc := reminderDoc{
+		ID:          uuid.New(),
+		UserID:      userID,
+		ListID:      in.ListID,
+		Title:       title,
+		Description: strings.TrimSpace(in.Description),
+		DueAt:       in.DueAt.UTC(),
+		Timezone:    tz,
+		Status:      reminder.StatusScheduled,
+		Priority:    priority,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	_, err := db.collection("reminders").InsertOne(ctx, doc)
 	if err != nil {
 		return reminder.Reminder{}, err
 	}
-	return db.GetReminder(ctx, userID, id)
+	return reminderFromDoc(doc), nil
 }
 
 func (db *DB) GetReminder(ctx context.Context, userID, id uuid.UUID) (reminder.Reminder, error) {
-	return scanReminder(db.SQL.QueryRowContext(ctx, reminderSelectWhereID, id, userID))
+	var doc reminderDoc
+	err := db.collection("reminders").FindOne(ctx, bson.M{"_id": id, "user_id": userID}).Decode(&doc)
+	if err == mongo.ErrNoDocuments {
+		return reminder.Reminder{}, ErrNotFound
+	}
+	if err != nil {
+		return reminder.Reminder{}, err
+	}
+	return reminderFromDoc(doc), nil
 }
 
 func (db *DB) ListReminders(ctx context.Context, f reminder.ListFilter) ([]reminder.Reminder, error) {
@@ -52,46 +107,46 @@ func (db *DB) ListReminders(ctx context.Context, f reminder.ListFilter) ([]remin
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	query := reminderSelectBase + ` WHERE r.user_id = $1`
-	args := []any{f.UserID}
-	n := 2
+
+	filter := bson.M{"user_id": f.UserID}
 	if f.Status != "" {
-		query += fmt.Sprintf(` AND r.status = $%d`, n)
-		args = append(args, f.Status)
-		n++
+		filter["status"] = f.Status
 	}
-	if f.From != nil {
-		query += fmt.Sprintf(` AND r.due_at >= $%d`, n)
-		args = append(args, f.From.UTC())
-		n++
-	}
-	if f.To != nil {
-		query += fmt.Sprintf(` AND r.due_at <= $%d`, n)
-		args = append(args, f.To.UTC())
-		n++
+	if f.From != nil || f.To != nil {
+		dueFilter := bson.M{}
+		if f.From != nil {
+			dueFilter["$gte"] = f.From.UTC()
+		}
+		if f.To != nil {
+			dueFilter["$lte"] = f.To.UTC()
+		}
+		filter["due_at"] = dueFilter
 	}
 	if q := strings.TrimSpace(f.Query); q != "" {
-		query += fmt.Sprintf(` AND (r.title ILIKE $%d OR r.description ILIKE $%d)`, n, n)
-		args = append(args, "%"+q+"%")
-		n++
+		filter["$or"] = []bson.M{
+			{"title": bson.M{"$regex": q, "$options": "i"}},
+			{"description": bson.M{"$regex": q, "$options": "i"}},
+		}
 	}
-	query += fmt.Sprintf(` ORDER BY r.due_at ASC LIMIT $%d`, n)
-	args = append(args, limit)
 
-	rows, err := db.SQL.QueryContext(ctx, query, args...)
+	opts := options.Find().
+		SetSort(bson.D{{Key: "due_at", Value: 1}}).
+		SetLimit(int64(limit))
+	cur, err := db.collection("reminders").Find(ctx, filter, opts)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer cur.Close(ctx)
+
 	var out []reminder.Reminder
-	for rows.Next() {
-		r, err := scanReminderRow(rows)
-		if err != nil {
+	for cur.Next(ctx) {
+		var doc reminderDoc
+		if err := cur.Decode(&doc); err != nil {
 			return nil, err
 		}
-		out = append(out, r)
+		out = append(out, reminderFromDoc(doc))
 	}
-	return out, rows.Err()
+	return out, cur.Err()
 }
 
 func (db *DB) UpdateReminder(ctx context.Context, userID, id uuid.UUID, in reminder.UpdateInput) (reminder.Reminder, error) {
@@ -130,33 +185,39 @@ func (db *DB) UpdateReminder(ctx context.Context, userID, id uuid.UUID, in remin
 	if in.ListID != nil {
 		listID = in.ListID
 	}
-	var completedAt *time.Time
+	completedAt := cur.CompletedAt
 	if status == reminder.StatusDone && cur.CompletedAt == nil {
 		now := time.Now().UTC()
 		completedAt = &now
-	} else {
-		completedAt = cur.CompletedAt
 	}
-	_, err = db.SQL.ExecContext(ctx, `
-		UPDATE reminders SET
-			title = $3, description = $4, due_at = $5, timezone = $6,
-			priority = $7, status = $8, list_id = $9, completed_at = $10, updated_at = NOW()
-		WHERE id = $1 AND user_id = $2`,
-		id, userID, title, desc, dueAt, tz, priority, status, listID, completedAt,
-	)
+
+	set := bson.M{
+		"title":        title,
+		"description":  desc,
+		"due_at":       dueAt,
+		"timezone":     tz,
+		"priority":     priority,
+		"status":       status,
+		"list_id":      listID,
+		"completed_at": completedAt,
+		"updated_at":   time.Now().UTC(),
+	}
+	res, err := db.collection("reminders").UpdateOne(ctx, bson.M{"_id": id, "user_id": userID}, bson.M{"$set": set})
 	if err != nil {
 		return reminder.Reminder{}, err
+	}
+	if res.MatchedCount == 0 {
+		return reminder.Reminder{}, ErrNotFound
 	}
 	return db.GetReminder(ctx, userID, id)
 }
 
 func (db *DB) DeleteReminder(ctx context.Context, userID, id uuid.UUID) error {
-	res, err := db.SQL.ExecContext(ctx, `DELETE FROM reminders WHERE id = $1 AND user_id = $2`, id, userID)
+	res, err := db.collection("reminders").DeleteOne(ctx, bson.M{"_id": id, "user_id": userID})
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
+	if res.DeletedCount == 0 {
 		return ErrNotFound
 	}
 	return nil
@@ -164,106 +225,56 @@ func (db *DB) DeleteReminder(ctx context.Context, userID, id uuid.UUID) error {
 
 func (db *DB) PauseReminder(ctx context.Context, userID, id uuid.UUID, resumeAt *time.Time) (reminder.Reminder, error) {
 	now := time.Now().UTC()
-	_, err := db.SQL.ExecContext(ctx, `
-		UPDATE reminders SET status = $3, paused_at = $4, resume_at = $5, updated_at = NOW()
-		WHERE id = $1 AND user_id = $2 AND status IN ('scheduled', 'paused')`,
-		id, userID, reminder.StatusPaused, now, resumeAt)
+	res, err := db.collection("reminders").UpdateOne(ctx, bson.M{
+		"_id":     id,
+		"user_id": userID,
+		"status":  bson.M{"$in": []string{reminder.StatusScheduled, reminder.StatusPaused}},
+	}, bson.M{"$set": bson.M{
+		"status":     reminder.StatusPaused,
+		"paused_at":  now,
+		"resume_at":  resumeAt,
+		"updated_at": now,
+	}})
 	if err != nil {
 		return reminder.Reminder{}, err
+	}
+	if res.MatchedCount == 0 {
+		return reminder.Reminder{}, ErrNotFound
 	}
 	return db.GetReminder(ctx, userID, id)
 }
 
 func (db *DB) ResumeReminder(ctx context.Context, userID, id uuid.UUID) (reminder.Reminder, error) {
-	_, err := db.SQL.ExecContext(ctx, `
-		UPDATE reminders SET status = $3, paused_at = NULL, resume_at = NULL, updated_at = NOW()
-		WHERE id = $1 AND user_id = $2 AND status = 'paused'`,
-		id, userID, reminder.StatusScheduled)
+	now := time.Now().UTC()
+	res, err := db.collection("reminders").UpdateOne(ctx, bson.M{
+		"_id":     id,
+		"user_id": userID,
+		"status":  reminder.StatusPaused,
+	}, bson.M{"$set": bson.M{
+		"status":     reminder.StatusScheduled,
+		"paused_at":  nil,
+		"resume_at":  nil,
+		"updated_at": now,
+	}})
 	if err != nil {
 		return reminder.Reminder{}, err
+	}
+	if res.MatchedCount == 0 {
+		return reminder.Reminder{}, ErrNotFound
 	}
 	return db.GetReminder(ctx, userID, id)
 }
 
 func (db *DB) SnoozeReminder(ctx context.Context, userID, id uuid.UUID, until time.Time) (reminder.Reminder, error) {
-	_, err := db.SQL.ExecContext(ctx, `
-		UPDATE reminders SET snoozed_until = $3, updated_at = NOW()
-		WHERE id = $1 AND user_id = $2`,
-		id, userID, until.UTC())
+	res, err := db.collection("reminders").UpdateOne(ctx, bson.M{"_id": id, "user_id": userID}, bson.M{"$set": bson.M{
+		"snoozed_until": until.UTC(),
+		"updated_at":    time.Now().UTC(),
+	}})
 	if err != nil {
 		return reminder.Reminder{}, err
 	}
-	return db.GetReminder(ctx, userID, id)
-}
-
-const reminderSelectBase = `
-	SELECT r.id, r.user_id, r.list_id, r.title, r.description, r.due_at, r.timezone,
-	       r.status, r.priority, r.pinned, r.snoozed_until, r.paused_at, r.resume_at,
-	       r.completed_at, r.created_at, r.updated_at
-	FROM reminders r`
-
-const reminderSelectWhereID = reminderSelectBase + ` WHERE r.id = $1 AND r.user_id = $2`
-
-func scanReminder(row *sql.Row) (reminder.Reminder, error) {
-	var r reminder.Reminder
-	var listID sql.NullString
-	var snoozed, paused, resume, completed sql.NullTime
-	err := row.Scan(
-		&r.ID, &r.UserID, &listID, &r.Title, &r.Description, &r.DueAt, &r.Timezone,
-		&r.Status, &r.Priority, &r.Pinned, &snoozed, &paused, &resume, &completed,
-		&r.CreatedAt, &r.UpdatedAt,
-	)
-	if err == sql.ErrNoRows {
+	if res.MatchedCount == 0 {
 		return reminder.Reminder{}, ErrNotFound
 	}
-	if err != nil {
-		return reminder.Reminder{}, err
-	}
-	if listID.Valid {
-		id, err := uuid.Parse(listID.String)
-		if err == nil {
-			r.ListID = &id
-		}
-	}
-	r.SnoozedUntil = nullTimePtr(snoozed)
-	r.PausedAt = nullTimePtr(paused)
-	r.ResumeAt = nullTimePtr(resume)
-	r.CompletedAt = nullTimePtr(completed)
-	return r, nil
-}
-
-type scannable interface {
-	Scan(dest ...any) error
-}
-
-func scanReminderRow(row scannable) (reminder.Reminder, error) {
-	var r reminder.Reminder
-	var listID sql.NullString
-	var snoozed, paused, resume, completed sql.NullTime
-	err := row.Scan(
-		&r.ID, &r.UserID, &listID, &r.Title, &r.Description, &r.DueAt, &r.Timezone,
-		&r.Status, &r.Priority, &r.Pinned, &snoozed, &paused, &resume, &completed,
-		&r.CreatedAt, &r.UpdatedAt,
-	)
-	if err != nil {
-		return reminder.Reminder{}, err
-	}
-	if listID.Valid {
-		id, err := uuid.Parse(listID.String)
-		if err == nil {
-			r.ListID = &id
-		}
-	}
-	r.SnoozedUntil = nullTimePtr(snoozed)
-	r.PausedAt = nullTimePtr(paused)
-	r.ResumeAt = nullTimePtr(resume)
-	r.CompletedAt = nullTimePtr(completed)
-	return r, nil
-}
-
-func nullTimePtr(t sql.NullTime) *time.Time {
-	if !t.Valid {
-		return nil
-	}
-	return &t.Time
+	return db.GetReminder(ctx, userID, id)
 }

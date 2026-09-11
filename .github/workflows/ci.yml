@@ -10,21 +10,20 @@ jobs:
   test:
     runs-on: ubuntu-latest
     services:
-      postgres:
-        image: postgres:16-alpine
+      mongo:
+        image: mongo:7
         env:
-          POSTGRES_USER: dayremind
-          POSTGRES_PASSWORD: dayremind
-          POSTGRES_DB: day_remind
+          MONGO_INITDB_ROOT_USERNAME: dayremind
+          MONGO_INITDB_ROOT_PASSWORD: dayremind
         ports:
-          - 5433:5432
+          - 27017:27017
         options: >-
-          --health-cmd "pg_isready -U dayremind -d day_remind"
+          --health-cmd "mongosh -u dayremind -p dayremind --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 })'"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
     env:
-      DATABASE_URL: postgres://dayremind:dayremind@localhost:5433/day_remind?sslmode=disable
+      DATABASE_URL: mongodb://dayremind:dayremind@localhost:27017/day_remind?authSource=admin
       SESSION_KEY: ci-test-session-key-at-least-32-chars-long
     steps:
       - uses: actions/checkout@v4

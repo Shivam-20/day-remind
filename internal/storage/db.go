@@ -1,20 +1,22 @@
 package storage
 
 import (
-	"database/sql"
-	"embed"
+	"context"
 	"fmt"
+	"net/url"
 	"strings"
+	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/pressly/goose/v3"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
 
-//go:embed migrations/*.sql
-var migrationFS embed.FS
+const defaultDatabase = "day_remind"
 
 type DB struct {
-	SQL *sql.DB
+	client *mongo.Client
+	db     *mongo.Database
 }
 
 func Open(databaseURL string) (*DB, error) {
@@ -22,34 +24,51 @@ func Open(databaseURL string) (*DB, error) {
 	if databaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
 	}
-	db, err := sql.Open("pgx", databaseURL)
+	dbName, err := databaseName(databaseURL)
 	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
-	}
-	db.SetMaxOpenConns(15)
-	db.SetMaxIdleConns(5)
-	if err := db.Ping(); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("ping database: %w", err)
-	}
-	if err := runMigrations(db); err != nil {
-		_ = db.Close()
 		return nil, err
 	}
-	return &DB{SQL: db}, nil
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	client, err := mongo.Connect(ctx, options.Client().ApplyURI(databaseURL))
+	if err != nil {
+		return nil, fmt.Errorf("connect database: %w", err)
+	}
+	database := client.Database(dbName)
+	if err := client.Ping(ctx, readpref.Primary()); err != nil {
+		_ = client.Disconnect(context.Background())
+		return nil, fmt.Errorf("ping database: %w", err)
+	}
+	if err := ensureIndexes(ctx, database); err != nil {
+		_ = client.Disconnect(context.Background())
+		return nil, err
+	}
+	return &DB{client: client, db: database}, nil
 }
 
-func runMigrations(db *sql.DB) error {
-	goose.SetBaseFS(migrationFS)
-	if err := goose.SetDialect("postgres"); err != nil {
-		return fmt.Errorf("goose dialect: %w", err)
+func databaseName(databaseURL string) (string, error) {
+	u, err := url.Parse(databaseURL)
+	if err != nil {
+		return "", fmt.Errorf("parse database url: %w", err)
 	}
-	if err := goose.Up(db, "migrations"); err != nil {
-		return fmt.Errorf("migrate: %w", err)
+	name := strings.TrimPrefix(u.Path, "/")
+	if idx := strings.Index(name, "?"); idx >= 0 {
+		name = name[:idx]
 	}
-	return nil
+	if name == "" {
+		return defaultDatabase, nil
+	}
+	return name, nil
 }
 
 func (db *DB) Close() error {
-	return db.SQL.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return db.client.Disconnect(ctx)
+}
+
+func (db *DB) collection(name string) *mongo.Collection {
+	return db.db.Collection(name)
 }

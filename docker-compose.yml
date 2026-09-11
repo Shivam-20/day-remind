@@ -1,19 +1,18 @@
 services:
-  postgres:
-    image: postgres:16-alpine
+  mongo:
+    image: mongo:7
     environment:
-      POSTGRES_USER: dayremind
-      POSTGRES_PASSWORD: dayremind
-      POSTGRES_DB: day_remind
+      MONGO_INITDB_ROOT_USERNAME: dayremind
+      MONGO_INITDB_ROOT_PASSWORD: dayremind
     ports:
-      - "5433:5432"
+      - "27017:27017"
     volumes:
-      - day_remind_pg:/var/lib/postgresql/data
+      - day_remind_mongo:/data/db
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dayremind -d day_remind"]
+      test: ["CMD", "mongosh", "-u", "dayremind", "-p", "dayremind", "--authenticationDatabase", "admin", "--eval", "db.adminCommand({ ping: 1 })"]
       interval: 5s
       timeout: 5s
       retries: 5
 
 volumes:
-  day_remind_pg:
+  day_remind_mongo:
