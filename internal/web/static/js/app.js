@@ -9,6 +9,7 @@ const routes = {
   '/reminders': renderReminders,
   '/settings': renderSettings,
   '/settings/vacation': renderVacationSettings,
+  '/settings/alerts': renderAlertSettings,
   ...(window.DR_ADMIN_ROUTES || {}),
 };
 
@@ -164,6 +165,10 @@ async function renderApp(route) {
   }
   const fn = routes[route] || routes['/today'];
   if (!routes[route] && route.startsWith('/settings')) {
+    if (route === '/settings/alerts') {
+      await renderAlertSettings();
+      return;
+    }
     await renderSettings(route);
     return;
   }
@@ -278,6 +283,10 @@ async function renderSettings(route = '/settings') {
     await renderVacationSettings();
     return;
   }
+  if (route === '/settings/alerts') {
+    await renderAlertSettings();
+    return;
+  }
   const main = `
     <h1 class="page-title">Settings</h1>
     <p class="page-sub">Manage your account and preferences</p>
@@ -285,6 +294,10 @@ async function renderSettings(route = '/settings') {
       <div class="card settings-card" data-href="#/settings/vacation">
         <h3>Vacation & Pause</h3>
         <p>Pause all notifications or review paused reminders.</p>
+      </div>
+      <div class="card settings-card" data-href="#/settings/alerts">
+        <h3>Alert channels</h3>
+        <p>Email and Telegram addresses for reminder alerts.</p>
       </div>
       <div class="card settings-card">
         <h3>Profile</h3>
@@ -311,6 +324,61 @@ async function renderSettings(route = '/settings') {
     el.addEventListener('click', () => {
       location.hash = el.dataset.href;
     });
+  });
+}
+
+async function renderAlertSettings() {
+  let channels;
+  try {
+    const data = await API.get('/api/me/notification-channels');
+    channels = data.channels || {};
+  } catch (err) {
+    showToast(err.message, 'error');
+    return;
+  }
+  const email = channels.email || {};
+  const telegram = channels.telegram || {};
+  const emailUnavailable = email.available === false;
+  const tgUnavailable = telegram.available === false;
+
+  const main = `
+    <h1 class="page-title">Alert channels</h1>
+    <p class="page-sub">Choose where Day Remind sends reminder alerts.</p>
+    <div class="card alert-channel-card">
+      <h3>Email alerts</h3>
+      ${emailUnavailable ? '<p class="channel-unavailable">Email alerts are not configured yet. Ask an admin to set up Resend.</p>' : ''}
+      <label class="checkbox-label"><input id="email-enabled" type="checkbox"${email.enabled ? ' checked' : ''}${emailUnavailable ? ' disabled' : ''}> Enable email alerts</label>
+      <div class="field"><label for="email-address">Alert email</label><input id="email-address" type="email" value="${escapeHTML(email.address || state.user.email || '')}"${emailUnavailable ? ' disabled' : ''}></div>
+    </div>
+    <div class="card alert-channel-card">
+      <h3>Telegram alerts</h3>
+      ${tgUnavailable ? '<p class="channel-unavailable">Telegram is not configured yet. Ask an admin to add the bot token.</p>' : '<p class="channel-help">Message <a href="https://t.me/userinfobot" target="_blank" rel="noopener">@userinfobot</a> to get your chat ID, then paste it below.</p>'}
+      <label class="checkbox-label"><input id="telegram-enabled" type="checkbox"${telegram.enabled ? ' checked' : ''}${tgUnavailable ? ' disabled' : ''}> Enable Telegram alerts</label>
+      <div class="field"><label for="telegram-chat-id">Telegram chat ID</label><input id="telegram-chat-id" inputmode="numeric" value="${escapeHTML(telegram.address || '')}" placeholder="e.g. 123456789"${tgUnavailable ? ' disabled' : ''}></div>
+    </div>
+    <div class="alert-actions">
+      <button class="btn btn-primary" id="save-alerts">Save channels</button>
+      <a href="#/settings" class="btn btn-ghost btn-sm">← Back to settings</a>
+    </div>
+  `;
+  document.getElementById('app').innerHTML = shellHTML('/settings/alerts', main);
+  bindShell('/settings/alerts');
+  document.getElementById('save-alerts')?.addEventListener('click', async () => {
+    try {
+      await API.patch('/api/me/notification-channels', {
+        email: {
+          enabled: document.getElementById('email-enabled').checked,
+          address: document.getElementById('email-address').value.trim(),
+        },
+        telegram: {
+          enabled: document.getElementById('telegram-enabled').checked,
+          address: document.getElementById('telegram-chat-id').value.trim(),
+        },
+      });
+      showToast('Alert channels saved');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
   });
 }
 

@@ -101,9 +101,7 @@ func (db *DB) CreateUser(ctx context.Context, email, passwordHash, displayName, 
 		Timezone:     timezone,
 		Locale:       "en",
 		IsAdmin:      db.isConfiguredAdmin(email),
-		NotificationPrefs: []notificationPrefDoc{
-			{Channel: "email", Enabled: true, Address: email},
-		},
+		NotificationPrefs: defaultNotificationPrefs(email),
 		CreatedAt: now,
 		UpdatedAt: now,
 	}

@@ -2,6 +2,7 @@ window.DR_ADMIN_ROUTES = {
   '/admin': renderAdminDashboard,
   '/admin/users': renderAdminUsers,
   '/admin/reminders': renderAdminReminders,
+  '/admin/settings': renderAdminDeliverySettings,
 };
 
 const adminState = {
@@ -19,6 +20,7 @@ function adminNavHTML(active) {
     ['/admin', 'Dashboard'],
     ['/admin/users', 'Users'],
     ['/admin/reminders', 'Reminders'],
+    ['/admin/settings', 'Delivery'],
   ];
   return `
     <nav class="admin-nav" aria-label="Admin">
@@ -109,6 +111,10 @@ async function renderAdminDashboard() {
         <a href="#/admin/reminders" class="card settings-card">
           <h3>Manage reminders</h3>
           <p>View and act on reminders across all users.</p>
+        </a>
+        <a href="#/admin/settings" class="card settings-card">
+          <h3>Delivery settings</h3>
+          <p>Configure email (Resend) and Telegram bot for alerts.</p>
         </a>
       </div>
     `;
@@ -491,5 +497,97 @@ function formatAdminDate(iso) {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
+  });
+}
+
+async function renderAdminDeliverySettings() {
+  let settings;
+  try {
+    settings = await API.get('/api/admin/settings/delivery');
+  } catch (err) {
+    showToast(err.message, 'error');
+    return;
+  }
+  const email = settings.email || {};
+  const telegram = settings.telegram || {};
+
+  const main = `
+    <div class="admin-toolbar">
+      <div>
+        <h1 class="page-title">Delivery settings</h1>
+        <p class="page-sub">Configure how the app sends email and Telegram alerts.</p>
+      </div>
+    </div>
+    <div class="card alert-channel-card">
+      <h3>Email (Resend)</h3>
+      <p class="channel-help">Users can enable email alerts once Resend is configured. Env vars <code>RESEND_API_KEY</code> and <code>EMAIL_FROM</code> are used as fallback.</p>
+      <label class="checkbox-label"><input id="email-enabled" type="checkbox"${email.enabled ? ' checked' : ''}> Enable email delivery</label>
+      <div class="field"><label for="email-from">From address</label><input id="email-from" type="email" value="${escapeHTML(email.from || '')}" placeholder="reminders@yourdomain.com"></div>
+      <div class="field"><label for="resend-key">Resend API key</label><input id="resend-key" type="password" autocomplete="new-password" placeholder="${email.api_key_hint ? 'Saved ' + escapeHTML(email.api_key_hint) + ' — leave blank to keep' : 're_...'}"></div>
+      <div class="inline-actions">
+        <input id="test-email-to" type="email" placeholder="Test recipient email" style="flex:1">
+        <button class="btn btn-sm" id="test-email">Send test</button>
+      </div>
+    </div>
+    <div class="card alert-channel-card">
+      <h3>Telegram bot</h3>
+      <p class="channel-help">Create a bot via <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a>. Users add their chat ID in Settings → Alert channels.</p>
+      <label class="checkbox-label"><input id="telegram-enabled" type="checkbox"${telegram.enabled ? ' checked' : ''}> Enable Telegram delivery</label>
+      <div class="field"><label for="telegram-token">Bot token</label><input id="telegram-token" type="password" autocomplete="new-password" placeholder="${telegram.bot_token_hint ? 'Saved ' + escapeHTML(telegram.bot_token_hint) + ' — leave blank to keep' : '123456:ABC...'}"></div>
+      <div class="inline-actions">
+        <input id="test-telegram-to" inputmode="numeric" placeholder="Test chat ID" style="flex:1">
+        <button class="btn btn-sm" id="test-telegram">Send test</button>
+      </div>
+    </div>
+    <button class="btn btn-primary" id="save-delivery">Save delivery settings</button>
+  `;
+  document.getElementById('app').innerHTML = adminShellHTML('/admin/settings', main);
+  bindAdminShell();
+
+  document.getElementById('save-delivery')?.addEventListener('click', async () => {
+    const body = {
+      email_enabled: document.getElementById('email-enabled').checked,
+      email_from: document.getElementById('email-from').value.trim(),
+      telegram_enabled: document.getElementById('telegram-enabled').checked,
+    };
+    const key = document.getElementById('resend-key').value.trim();
+    const token = document.getElementById('telegram-token').value.trim();
+    if (key) body.resend_api_key = key;
+    if (token) body.telegram_bot_token = token;
+    try {
+      await API.patch('/api/admin/settings/delivery', body);
+      showToast('Delivery settings saved');
+      renderAdminDeliverySettings();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
+  document.getElementById('test-email')?.addEventListener('click', async () => {
+    const to = document.getElementById('test-email-to').value.trim();
+    if (!to) {
+      showToast('Enter a test email address', 'error');
+      return;
+    }
+    try {
+      await API.post('/api/admin/settings/delivery/test', { channel: 'email', to });
+      showToast('Test email sent');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
+  document.getElementById('test-telegram')?.addEventListener('click', async () => {
+    const to = document.getElementById('test-telegram-to').value.trim();
+    if (!to) {
+      showToast('Enter a test chat ID', 'error');
+      return;
+    }
+    try {
+      await API.post('/api/admin/settings/delivery/test', { channel: 'telegram', to });
+      showToast('Test Telegram message sent');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
   });
 }

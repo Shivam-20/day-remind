@@ -108,8 +108,9 @@ docs/plans/                 # Implementation roadmap
 | `SESSION_KEY` | yes | Min 32 chars (loaded but cookie is stateless token in DB today) |
 | `WEB_PORT` | no | Default `8090` |
 | `ADMIN_EMAILS` | no | Comma-separated emails auto-promoted to `is_admin: true` on startup + signup |
-| `RESEND_API_KEY` | no | Phase 2 email delivery (not wired yet) |
-| `TELEGRAM_BOT_TOKEN` | no | Phase 2 Telegram (not wired yet) |
+| `RESEND_API_KEY` | no | Resend API key for email alerts (admin can also set in DB) |
+| `EMAIL_FROM` | no | Sender address for email alerts |
+| `TELEGRAM_BOT_TOKEN` | no | Telegram bot token (admin can also set in DB) |
 
 ---
 
@@ -172,7 +173,7 @@ TTL index on `expires_at` auto-deletes expired sessions.
 }
 ```
 
-**Not implemented yet** (were in old Postgres schema): `lists`, `reminder_deliveries`, `telegram_link_tokens`.
+**Not implemented yet:** scheduler to fire alerts on due reminders; `lists`, `reminder_deliveries`, auto Telegram link flow.
 
 ---
 
@@ -196,6 +197,8 @@ All JSON. Errors: `{"error":"message"}` with appropriate status code.
 | GET | `/api/me` | Current user incl. `is_admin` |
 | POST | `/api/me/notifications/pause` | body: optional `until` ISO8601 |
 | POST | `/api/me/notifications/resume` | |
+| GET | `/api/me/notification-channels` | User email/Telegram alert prefs + availability |
+| PATCH | `/api/me/notification-channels` | body: `{ email: {enabled, address}, telegram: {enabled, address} }` |
 | GET | `/api/reminders` | query: `status`, `q`, `from`, `to` (RFC3339) |
 | POST | `/api/reminders` | body: title, description, due_at, timezone, priority |
 | GET/PATCH/DELETE | `/api/reminders/{id}` | User-scoped |
@@ -209,6 +212,8 @@ All JSON. Errors: `{"error":"message"}` with appropriate status code.
 | Method | Path | Notes |
 |--------|------|-------|
 | GET | `/api/admin/stats` | users, reminders, sessions counts |
+| GET/PATCH | `/api/admin/settings/delivery` | Resend + Telegram bot config (secrets masked on GET) |
+| POST | `/api/admin/settings/delivery/test` | body: `{ channel, to }` — send test alert |
 | GET/POST | `/api/admin/users` | list (q, limit, offset) / create |
 | GET/PATCH/DELETE | `/api/admin/users/{id}` | Cannot delete self |
 | DELETE | `/api/admin/users/{id}/sessions` | Revoke all sessions |
@@ -304,12 +309,14 @@ Set `ADMIN_EMAILS=their@email.com` in `.env`, restart server. Existing user gets
 - Auth (signup, login, session cookie, logout)
 - Reminder CRUD + pause/resume/snooze/done
 - Vacation mode (pause all notifications)
-- Embedded web UI (Today, All, Settings)
+- User alert channels (email address + Telegram chat ID)
+- Admin delivery settings (Resend API + Telegram bot) with test send
+- Embedded web UI (Today, All, Settings, alert channels)
 - Admin API + admin panel UI
 
 **Not done** (see `docs/plans/2026-09-11-day-remind.md`)
 
-- Email/Telegram delivery
+- Scheduler to dispatch alerts when reminders are due
 - Lists, tags, recurrence
 - JSON import/export UI
 - Google/Gmail sync

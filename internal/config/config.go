@@ -8,10 +8,13 @@ import (
 )
 
 type Config struct {
-	DatabaseURL string
-	WebPort     int
-	SessionKey  string
-	AdminEmails []string
+	DatabaseURL      string
+	WebPort          int
+	SessionKey       string
+	AdminEmails      []string
+	ResendAPIKey     string
+	EmailFrom        string
+	TelegramBotToken string
 }
 
 func Load() (Config, error) {
@@ -32,10 +35,13 @@ func Load() (Config, error) {
 		port = n
 	}
 	return Config{
-		DatabaseURL: dbURL,
-		WebPort:     port,
-		SessionKey:  sessionKey,
-		AdminEmails: parseList(os.Getenv("ADMIN_EMAILS")),
+		DatabaseURL:      dbURL,
+		WebPort:          port,
+		SessionKey:       sessionKey,
+		AdminEmails:      parseList(os.Getenv("ADMIN_EMAILS")),
+		ResendAPIKey:     strings.TrimSpace(os.Getenv("RESEND_API_KEY")),
+		EmailFrom:        strings.TrimSpace(os.Getenv("EMAIL_FROM")),
+		TelegramBotToken: strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
 	}, nil
 }
 

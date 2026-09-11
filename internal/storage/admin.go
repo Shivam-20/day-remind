@@ -95,9 +95,7 @@ func (db *DB) CreateUserAdmin(ctx context.Context, email, passwordHash, displayN
 		Timezone:     timezone,
 		Locale:       "en",
 		IsAdmin:      isAdmin,
-		NotificationPrefs: []notificationPrefDoc{
-			{Channel: "email", Enabled: true, Address: email},
-		},
+		NotificationPrefs: defaultNotificationPrefs(email),
 		CreatedAt: now,
 		UpdatedAt: now,
 	}

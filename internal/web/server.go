@@ -46,6 +46,8 @@ func (s *Server) Handler() http.Handler {
 		pr.Get("/api/me", s.handleMe)
 		pr.Post("/api/me/notifications/pause", s.handlePauseNotifications)
 		pr.Post("/api/me/notifications/resume", s.handleResumeNotifications)
+		pr.Get("/api/me/notification-channels", s.handleGetNotificationChannels)
+		pr.Patch("/api/me/notification-channels", s.handleUpdateNotificationChannels)
 
 		pr.Get("/api/reminders", s.handleListReminders)
 		pr.Post("/api/reminders", s.handleCreateReminder)
@@ -63,6 +65,10 @@ func (s *Server) Handler() http.Handler {
 		ar.Use(s.requireAdmin)
 
 		ar.Get("/api/admin/stats", s.handleAdminStats)
+
+		ar.Get("/api/admin/settings/delivery", s.handleAdminGetDeliverySettings)
+		ar.Patch("/api/admin/settings/delivery", s.handleAdminUpdateDeliverySettings)
+		ar.Post("/api/admin/settings/delivery/test", s.handleAdminTestDelivery)
 
 		ar.Get("/api/admin/users", s.handleAdminListUsers)
 		ar.Post("/api/admin/users", s.handleAdminCreateUser)

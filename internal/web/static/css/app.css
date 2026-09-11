@@ -383,6 +383,21 @@ button, input, select, textarea { font: inherit; }
 }
 .checkbox-label input { width: auto; }
 
+.alert-channel-card { margin-bottom: 16px; }
+.alert-channel-card h3 { margin: 0 0 8px; font-size: 1rem; }
+.channel-help, .channel-unavailable { font-size: 0.85rem; color: var(--text-2); margin: 0 0 12px; }
+.channel-unavailable { color: var(--danger); }
+.alert-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.inline-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.inline-actions input {
+  min-width: 180px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
 @media (max-width: 768px) {
   .layout { grid-template-columns: 1fr; }
   .sidebar { display: none; }
