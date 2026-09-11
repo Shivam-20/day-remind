@@ -1,0 +1,10 @@
+{
+  "name": "Day Remind",
+  "short_name": "Remind",
+  "description": "Reminders that reach you your way",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f1219",
+  "theme_color": "#f5a623",
+  "icons": []
+}

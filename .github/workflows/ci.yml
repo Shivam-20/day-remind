@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: dayremind
+          POSTGRES_PASSWORD: dayremind
+          POSTGRES_DB: day_remind
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U dayremind -d day_remind"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://dayremind:dayremind@localhost:5433/day_remind?sslmode=disable
+      SESSION_KEY: ci-test-session-key-at-least-32-chars-long
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - run: go mod download
+      - run: go test ./...
+      - run: go build -o /dev/null ./cmd/server
