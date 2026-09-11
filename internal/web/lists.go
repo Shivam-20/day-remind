@@ -28,7 +28,10 @@ func (s *Server) handleListLists(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(items))
 	for _, item := range items {
-		out = append(out, listPayload(item))
+		payload := listPayload(item)
+		count, _ := s.db.CountRemindersInList(r.Context(), userID, item.ID)
+		payload["count"] = count
+		out = append(out, payload)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"lists": out})
 }

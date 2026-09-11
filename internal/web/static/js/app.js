@@ -10,6 +10,7 @@ const routes = {
   '/settings': renderSettings,
   '/settings/vacation': renderVacationSettings,
   '/settings/alerts': renderAlertSettings,
+  ...(window.DR_FEATURE_ROUTES || {}),
   ...(window.DR_ADMIN_ROUTES || {}),
 };
 
@@ -128,7 +129,9 @@ function shellHTML(active, mainHTML) {
         <div class="brand"><span>Day</span> Remind</div>
         <nav class="nav">
           <a href="#/today" class="${active === '/today' ? 'active' : ''}">Today</a>
+          <a href="#/calendar" class="${active === '/calendar' ? 'active' : ''}">Calendar</a>
           <a href="#/reminders" class="${active === '/reminders' ? 'active' : ''}">All reminders</a>
+          <a href="#/lists" class="${active === '/lists' ? 'active' : ''}">Lists</a>
           <a href="#/settings" class="${active.startsWith('/settings') ? 'active' : ''}">Settings</a>
           ${state.user?.is_admin ? `<a href="#/admin" class="${active.startsWith('/admin') ? 'active' : ''}">Admin</a>` : ''}
         </nav>
@@ -151,9 +154,10 @@ function shellHTML(active, mainHTML) {
     </div>
     <nav class="bottom-nav" aria-label="Mobile">
       <a href="#/today" class="${active === '/today' ? 'active' : ''}">Today</a>
+      <a href="#/calendar" class="${active === '/calendar' ? 'active' : ''}">Cal</a>
       <a href="#/reminders" class="${active === '/reminders' ? 'active' : ''}">All</a>
+      <a href="#/lists" class="${active === '/lists' ? 'active' : ''}">Lists</a>
       <a href="#/settings" class="${active.startsWith('/settings') ? 'active' : ''}">Settings</a>
-      <a href="#/today" aria-label="Add" onclick="openCreateDrawer();return false;">Add</a>
     </nav>
     <button class="fab" id="fab-add" aria-label="Add reminder">+</button>
   `;
@@ -177,14 +181,25 @@ function bindShell(active) {
   });
 }
 
+function resolveRoute(route) {
+  const featureRoutes = window.DR_FEATURE_ROUTES || {};
+  if (featureRoutes[route]) return featureRoutes[route];
+  if (routes[route]) return routes[route];
+  return null;
+}
+
 async function renderApp(route) {
   if (route.startsWith('/admin')) {
-    const fn = routes[route] || routes['/admin'];
+    const fn = resolveRoute(route) || routes['/admin'];
     await fn(route);
     return;
   }
-  const fn = routes[route] || routes['/today'];
-  if (!routes[route] && route.startsWith('/settings')) {
+  const fn = resolveRoute(route);
+  if (fn) {
+    await fn(route);
+    return;
+  }
+  if (route.startsWith('/settings')) {
     if (route === '/settings/alerts') {
       await renderAlertSettings();
       return;
@@ -192,7 +207,7 @@ async function renderApp(route) {
     await renderSettings(route);
     return;
   }
-  await fn(route);
+  await routes['/today'](route);
 }
 
 async function loadReminders(params = '') {

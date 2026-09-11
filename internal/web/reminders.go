@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/shivam-20/day-remind/internal/reminder"
+	"github.com/shivam-20/day-remind/internal/scheduler"
 	"github.com/shivam-20/day-remind/internal/storage"
 )
 
@@ -237,6 +238,8 @@ func (s *Server) handleDoneReminder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not update")
 		return
 	}
+	scheduler.ScheduleNextRecurrenceIfNeeded(r.Context(), s.db, userID, id)
+	item, _ = s.db.GetReminder(r.Context(), userID, id)
 	writeJSON(w, http.StatusOK, reminderPayload(item))
 }
 
@@ -356,7 +359,14 @@ func (s *Server) applyReminderOffsets(r *http.Request, userID, reminderID uuid.U
 			return err
 		}
 	}
-	return nil
+	if len(offsets) == 0 {
+		return nil
+	}
+	item, err := s.db.GetReminder(r.Context(), userID, reminderID)
+	if err != nil {
+		return err
+	}
+	return s.db.RematerializeOccurrences(r.Context(), userID, item)
 }
 
 func (s *Server) replaceReminderOffsets(r *http.Request, userID, reminderID uuid.UUID, offsets []offsetInput) error {
