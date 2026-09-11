@@ -58,6 +58,30 @@ func (s *Server) Handler() http.Handler {
 		pr.Post("/api/reminders/{id}/snooze", s.handleSnoozeReminder)
 	})
 
+	r.Group(func(ar chi.Router) {
+		ar.Use(s.requireSession)
+		ar.Use(s.requireAdmin)
+
+		ar.Get("/api/admin/stats", s.handleAdminStats)
+
+		ar.Get("/api/admin/users", s.handleAdminListUsers)
+		ar.Post("/api/admin/users", s.handleAdminCreateUser)
+		ar.Get("/api/admin/users/{id}", s.handleAdminGetUser)
+		ar.Patch("/api/admin/users/{id}", s.handleAdminUpdateUser)
+		ar.Delete("/api/admin/users/{id}", s.handleAdminDeleteUser)
+		ar.Delete("/api/admin/users/{id}/sessions", s.handleAdminRevokeUserSessions)
+
+		ar.Get("/api/admin/reminders", s.handleAdminListReminders)
+		ar.Post("/api/admin/reminders", s.handleAdminCreateReminder)
+		ar.Get("/api/admin/reminders/{id}", s.handleAdminGetReminder)
+		ar.Patch("/api/admin/reminders/{id}", s.handleAdminUpdateReminder)
+		ar.Delete("/api/admin/reminders/{id}", s.handleAdminDeleteReminder)
+		ar.Post("/api/admin/reminders/{id}/done", s.handleAdminDoneReminder)
+		ar.Post("/api/admin/reminders/{id}/pause", s.handleAdminPauseReminder)
+		ar.Post("/api/admin/reminders/{id}/resume", s.handleAdminResumeReminder)
+		ar.Post("/api/admin/reminders/{id}/snooze", s.handleAdminSnoozeReminder)
+	})
+
 	staticFS, err := fs.Sub(staticFiles, "static")
 	if err != nil {
 		panic(err)

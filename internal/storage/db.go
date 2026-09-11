@@ -15,11 +15,12 @@ import (
 const defaultDatabase = "day_remind"
 
 type DB struct {
-	client *mongo.Client
-	db     *mongo.Database
+	client      *mongo.Client
+	db          *mongo.Database
+	adminEmails map[string]struct{}
 }
 
-func Open(databaseURL string) (*DB, error) {
+func Open(databaseURL string, adminEmails []string) (*DB, error) {
 	databaseURL = strings.TrimSpace(databaseURL)
 	if databaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
@@ -45,7 +46,36 @@ func Open(databaseURL string) (*DB, error) {
 		_ = client.Disconnect(context.Background())
 		return nil, err
 	}
-	return &DB{client: client, db: database}, nil
+	store := &DB{
+		client:      client,
+		db:          database,
+		adminEmails: normalizeAdminEmails(adminEmails),
+	}
+	if err := store.EnsureAdminEmails(ctx); err != nil {
+		_ = client.Disconnect(context.Background())
+		return nil, err
+	}
+	return store, nil
+}
+
+func normalizeAdminEmails(emails []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(emails))
+	for _, email := range emails {
+		email = strings.TrimSpace(strings.ToLower(email))
+		if email != "" {
+			out[email] = struct{}{}
+		}
+	}
+	return out
+}
+
+func (db *DB) isConfiguredAdmin(email string) bool {
+	email = strings.TrimSpace(strings.ToLower(email))
+	if email == "" {
+		return false
+	}
+	_, ok := db.adminEmails[email]
+	return ok
 }
 
 func databaseName(databaseURL string) (string, error) {

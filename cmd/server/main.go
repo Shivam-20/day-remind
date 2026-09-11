@@ -14,7 +14,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
-	db, err := storage.Open(cfg.DatabaseURL)
+	db, err := storage.Open(cfg.DatabaseURL, cfg.AdminEmails)
 	if err != nil {
 		log.Fatalf("database: %v", err)
 	}
