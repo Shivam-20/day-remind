@@ -64,16 +64,18 @@ Set `ADMIN_EMAILS` in `.env` (comma-separated) to grant admin access. Admins see
 - UI design: [`docs/specs/2026-09-11-day-remind-ui-design.md`](docs/specs/2026-09-11-day-remind-ui-design.md)
 - Implementation plan: [`docs/plans/2026-09-11-day-remind.md`](docs/plans/2026-09-11-day-remind.md)
 
-## MVP status (this branch)
+## MVP status
 
 - [x] MongoDB collections + indexes
-- [x] Auth (signup, login, session cookie)
-- [x] Reminder CRUD + pause/resume/snooze/done
-- [x] Vacation mode (pause all notifications)
-- [x] Embedded web UI (Today, All, Settings, create drawer)
-- [x] Admin panel UI (users, reminders, dashboard)
+- [x] Auth (signup, login, session cookie, forgot/reset password)
+- [x] Reminder CRUD + pause/resume/snooze/done (presets)
+- [x] Vacation mode + quiet hours
+- [x] Embedded web UI (Today, All, Settings, drawers, notification bell)
+- [x] Admin panel UI (users, reminders, dashboard, delivery settings)
 - [x] User alert channels (email + Telegram)
 - [x] Admin delivery config (Resend + Telegram bot)
-- [ ] Scheduled alert dispatch on due reminders (Phase 2)
+- [x] Scheduled alert dispatch on due reminders (scheduler + outbox)
+- [x] Telegram bot webhook + link flow
+- [x] PWA service worker
 - [ ] JSON import/export UI (Phase 8)
 - [ ] Google/Gmail sync (Phase 11)

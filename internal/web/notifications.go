@@ -13,8 +13,10 @@ type channelPrefRequest struct {
 }
 
 type updateChannelsRequest struct {
-	Email    *channelPrefRequest `json:"email"`
-	Telegram *channelPrefRequest `json:"telegram"`
+	Email       *channelPrefRequest `json:"email"`
+	Telegram    *channelPrefRequest `json:"telegram"`
+	QuietStart  *string             `json:"quiet_start"`
+	QuietEnd    *string             `json:"quiet_end"`
 }
 
 func (s *Server) effectiveDelivery(r *http.Request) (notify.DeliveryConfig, error) {
@@ -37,7 +39,8 @@ func (s *Server) handleGetNotificationChannels(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, "could not load delivery settings")
 		return
 	}
-	writeJSON(w, http.StatusOK, notificationChannelsPayload(prefs, notify.ChannelAvailability(delivery)))
+	quietStart, quietEnd, _ := s.db.GetUserQuietHours(r.Context(), userID)
+	writeJSON(w, http.StatusOK, notificationChannelsPayload(prefs, notify.ChannelAvailability(delivery), quietStart, quietEnd))
 }
 
 func (s *Server) handleUpdateNotificationChannels(w http.ResponseWriter, r *http.Request) {
@@ -58,12 +61,23 @@ func (s *Server) handleUpdateNotificationChannels(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if body.QuietStart != nil || body.QuietEnd != nil {
+		start, end, _ := s.db.GetUserQuietHours(r.Context(), userID)
+		if body.QuietStart != nil {
+			start = *body.QuietStart
+		}
+		if body.QuietEnd != nil {
+			end = *body.QuietEnd
+		}
+		_ = s.db.UpdateUserQuietHours(r.Context(), userID, start, end)
+	}
 	delivery, err := s.effectiveDelivery(r)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not load delivery settings")
 		return
 	}
-	writeJSON(w, http.StatusOK, notificationChannelsPayload(prefs, notify.ChannelAvailability(delivery)))
+	quietStart, quietEnd, _ := s.db.GetUserQuietHours(r.Context(), userID)
+	writeJSON(w, http.StatusOK, notificationChannelsPayload(prefs, notify.ChannelAvailability(delivery), quietStart, quietEnd))
 }
 
 func applyChannelUpdates(current []storage.NotificationPref, body updateChannelsRequest) []storage.NotificationPref {
@@ -97,7 +111,7 @@ func applyChannelUpdates(current []storage.NotificationPref, body updateChannels
 	}
 }
 
-func notificationChannelsPayload(prefs []storage.NotificationPref, available map[string]bool) map[string]any {
+func notificationChannelsPayload(prefs []storage.NotificationPref, available map[string]bool, quietStart, quietEnd string) map[string]any {
 	out := map[string]any{}
 	for _, p := range prefs {
 		out[p.Channel] = map[string]any{
@@ -112,5 +126,9 @@ func notificationChannelsPayload(prefs []storage.NotificationPref, available map
 	if _, ok := out[storage.ChannelTelegram]; !ok {
 		out[storage.ChannelTelegram] = map[string]any{"enabled": false, "address": "", "available": available[storage.ChannelTelegram]}
 	}
-	return map[string]any{"channels": out}
+	return map[string]any{
+		"channels":    out,
+		"quiet_start": quietStart,
+		"quiet_end":   quietEnd,
+	}
 }

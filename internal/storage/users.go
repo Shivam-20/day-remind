@@ -62,6 +62,8 @@ type userDoc struct {
 	NotificationsPaused      bool                  `bson:"notifications_paused"`
 	NotificationsPausedUntil *time.Time            `bson:"notifications_paused_until,omitempty"`
 	IsAdmin                  bool                  `bson:"is_admin"`
+	QuietStart               string                `bson:"quiet_start,omitempty"`
+	QuietEnd                 string                `bson:"quiet_end,omitempty"`
 	NotificationPrefs        []notificationPrefDoc `bson:"notification_prefs"`
 	CreatedAt                time.Time             `bson:"created_at"`
 	UpdatedAt                time.Time             `bson:"updated_at"`

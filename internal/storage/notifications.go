@@ -24,12 +24,13 @@ type NotificationPref struct {
 }
 
 type DeliverySettings struct {
-	EmailEnabled       bool
-	EmailFrom          string
-	ResendAPIKey       string
-	TelegramEnabled    bool
-	TelegramBotToken   string
-	UpdatedAt          time.Time
+	EmailEnabled         bool
+	EmailFrom            string
+	ResendAPIKey         string
+	TelegramEnabled      bool
+	TelegramBotToken     string
+	TelegramBotUsername  string
+	UpdatedAt            time.Time
 }
 
 type DeliverySettingsUpdate struct {
@@ -45,9 +46,10 @@ type deliverySettingsDoc struct {
 	EmailEnabled     bool      `bson:"email_enabled"`
 	EmailFrom        string    `bson:"email_from"`
 	ResendAPIKey     string    `bson:"resend_api_key"`
-	TelegramEnabled  bool      `bson:"telegram_enabled"`
-	TelegramBotToken string    `bson:"telegram_bot_token"`
-	UpdatedAt        time.Time `bson:"updated_at"`
+	TelegramEnabled      bool      `bson:"telegram_enabled"`
+	TelegramBotToken     string    `bson:"telegram_bot_token"`
+	TelegramBotUsername  string    `bson:"telegram_bot_username"`
+	UpdatedAt            time.Time `bson:"updated_at"`
 }
 
 const deliverySettingsID = "delivery"
@@ -178,7 +180,7 @@ func (db *DB) GetDeliverySettings(ctx context.Context) (DeliverySettings, error)
 	if err != nil {
 		return DeliverySettings{}, err
 	}
-	return deliveryFromDoc(doc), nil
+	return deliverySettingsFromDoc(doc), nil
 }
 
 func (db *DB) UpdateDeliverySettings(ctx context.Context, in DeliverySettingsUpdate) (DeliverySettings, error) {
@@ -205,17 +207,21 @@ func (db *DB) UpdateDeliverySettings(ctx context.Context, in DeliverySettingsUpd
 		token := strings.TrimSpace(*in.TelegramBotToken)
 		if token != "" {
 			cur.TelegramBotToken = token
+			if username, err := fetchTelegramBotUsername(ctx, token); err == nil {
+				cur.TelegramBotUsername = username
+			}
 		}
 	}
 	cur.UpdatedAt = time.Now().UTC()
 	doc := deliverySettingsDoc{
-		ID:               deliverySettingsID,
-		EmailEnabled:     cur.EmailEnabled,
-		EmailFrom:        cur.EmailFrom,
-		ResendAPIKey:     cur.ResendAPIKey,
-		TelegramEnabled:  cur.TelegramEnabled,
-		TelegramBotToken: cur.TelegramBotToken,
-		UpdatedAt:        cur.UpdatedAt,
+		ID:                  deliverySettingsID,
+		EmailEnabled:        cur.EmailEnabled,
+		EmailFrom:           cur.EmailFrom,
+		ResendAPIKey:        cur.ResendAPIKey,
+		TelegramEnabled:     cur.TelegramEnabled,
+		TelegramBotToken:    cur.TelegramBotToken,
+		TelegramBotUsername: cur.TelegramBotUsername,
+		UpdatedAt:           cur.UpdatedAt,
 	}
 	opts := options.Update().SetUpsert(true)
 	_, err = db.collection("system_settings").UpdateOne(ctx, bson.M{"_id": deliverySettingsID}, bson.M{"$set": doc}, opts)
@@ -225,13 +231,14 @@ func (db *DB) UpdateDeliverySettings(ctx context.Context, in DeliverySettingsUpd
 	return cur, nil
 }
 
-func deliveryFromDoc(doc deliverySettingsDoc) DeliverySettings {
+func deliverySettingsFromDoc(doc deliverySettingsDoc) DeliverySettings {
 	return DeliverySettings{
-		EmailEnabled:     doc.EmailEnabled,
-		EmailFrom:        doc.EmailFrom,
-		ResendAPIKey:     doc.ResendAPIKey,
-		TelegramEnabled:  doc.TelegramEnabled,
-		TelegramBotToken: doc.TelegramBotToken,
-		UpdatedAt:        doc.UpdatedAt,
+		EmailEnabled:        doc.EmailEnabled,
+		EmailFrom:           doc.EmailFrom,
+		ResendAPIKey:        doc.ResendAPIKey,
+		TelegramEnabled:     doc.TelegramEnabled,
+		TelegramBotToken:    doc.TelegramBotToken,
+		TelegramBotUsername: doc.TelegramBotUsername,
+		UpdatedAt:           doc.UpdatedAt,
 	}
 }

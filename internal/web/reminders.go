@@ -20,7 +20,8 @@ type createReminderRequest struct {
 }
 
 type snoozeRequest struct {
-	Until string `json:"until"`
+	Until  string `json:"until"`
+	Preset string `json:"preset"`
 }
 
 func (s *Server) handleListReminders(w http.ResponseWriter, r *http.Request) {
@@ -242,9 +243,32 @@ func (s *Server) handleSnoozeReminder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	until, err := time.Parse(time.RFC3339, body.Until)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "until must be RFC3339")
+	var until time.Time
+	if body.Preset != "" {
+		cur, err := s.db.GetReminder(r.Context(), userID, id)
+		if err == storage.ErrNotFound {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not load reminder")
+			return
+		}
+		t, err := reminder.SnoozeUntil(body.Preset, time.Now().UTC(), cur.Timezone)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		until = t
+	} else if body.Until != "" {
+		t, err := time.Parse(time.RFC3339, body.Until)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "until must be RFC3339")
+			return
+		}
+		until = t
+	} else {
+		writeError(w, http.StatusBadRequest, "preset or until required")
 		return
 	}
 	item, err := s.db.SnoozeReminder(r.Context(), userID, id, until)
@@ -257,6 +281,10 @@ func (s *Server) handleSnoozeReminder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, reminderPayload(item))
+}
+
+func (s *Server) handleSnoozePresets(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"presets": reminder.SnoozePresets()})
 }
 
 func reminderPayload(r reminder.Reminder) map[string]any {

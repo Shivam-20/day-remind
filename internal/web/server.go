@@ -40,6 +40,9 @@ func (s *Server) Handler() http.Handler {
 	r.Post("/api/auth/signup", s.handleSignup)
 	r.Post("/api/auth/login", s.handleLogin)
 	r.Post("/api/auth/logout", s.handleLogout)
+	r.Post("/api/auth/forgot-password", s.handleForgotPassword)
+	r.Post("/api/auth/reset-password", s.handleResetPassword)
+	r.Post("/api/webhooks/telegram", s.handleTelegramWebhook)
 
 	r.Group(func(pr chi.Router) {
 		pr.Use(s.requireSession)
@@ -48,10 +51,14 @@ func (s *Server) Handler() http.Handler {
 		pr.Post("/api/me/notifications/resume", s.handleResumeNotifications)
 		pr.Get("/api/me/notification-channels", s.handleGetNotificationChannels)
 		pr.Patch("/api/me/notification-channels", s.handleUpdateNotificationChannels)
+		pr.Post("/api/me/telegram/link", s.handleTelegramLink)
+		pr.Get("/api/notifications", s.handleListNotifications)
+		pr.Get("/api/snooze/presets", s.handleSnoozePresets)
 
 		pr.Get("/api/reminders", s.handleListReminders)
 		pr.Post("/api/reminders", s.handleCreateReminder)
 		pr.Get("/api/reminders/{id}", s.handleGetReminder)
+		pr.Get("/api/reminders/{id}/deliveries", s.handleListReminderDeliveries)
 		pr.Patch("/api/reminders/{id}", s.handleUpdateReminder)
 		pr.Delete("/api/reminders/{id}", s.handleDeleteReminder)
 		pr.Post("/api/reminders/{id}/done", s.handleDoneReminder)

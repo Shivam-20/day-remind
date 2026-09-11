@@ -65,6 +65,40 @@ button, input, select, textarea { font: inherit; }
   top: 0;
   z-index: 10;
 }
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.link-out {
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.detail-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 16px;
+  margin: 0;
+}
+.detail-list dt { color: var(--text-2); font-size: 0.85rem; }
+.detail-list dd { margin: 0; }
+.notification-list { display: flex; flex-direction: column; gap: 12px; }
+.notification-item {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.notification-meta { font-weight: 600; font-size: 0.9rem; }
+.notification-time { font-size: 0.8rem; color: var(--text-2); margin-top: 4px; }
+.notification-error { font-size: 0.8rem; color: var(--danger); margin-top: 6px; }
 .page { padding: 20px; max-width: 1100px; width: 100%; margin: 0 auto; }
 .vacation-banner {
   background: var(--accent-soft);

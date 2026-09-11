@@ -4,7 +4,7 @@ Guide for AI agents working in this repository. Read this before making changes.
 
 ## What this project is
 
-**Day Remind** is a multi-channel reminder web app (MVP). Users sign up, create dated reminders, pause/snooze/mark done, and (future) receive notifications via email/Telegram.
+**Day Remind** is a multi-channel reminder web app. Users sign up, create dated reminders, pause/snooze/mark done, and receive notifications via email/Telegram when reminders are due.
 
 - **Language:** Go 1.22 backend + vanilla JS SPA (embedded, no build step)
 - **Database:** MongoDB 7 (official Go driver)
@@ -33,7 +33,10 @@ CI (`.github/workflows/ci.yml`) runs tests against a MongoDB service container.
 
 ```
 Browser (hash SPA)  →  internal/web  →  internal/storage  →  MongoDB
+                           ↓                    ↑
+                    internal/scheduler ─────────┘
                            ↓
+                    internal/notify (email/Telegram send)
                     internal/reminder (domain types)
                     internal/auth (bcrypt passwords)
                     internal/config (env)
@@ -56,6 +59,8 @@ Browser (hash SPA)  →  internal/web  →  internal/storage  →  MongoDB
 | Storage | `internal/storage` | All MongoDB access |
 | Web | `internal/web` | HTTP handlers, routing, embedded static |
 | Config | `internal/config` | Env parsing |
+| Scheduler | `internal/scheduler` | Polls due reminders every 30s, dispatches alerts |
+| Notify | `internal/notify` | Resend email + Telegram HTTP send adapters |
 
 Do **not** import `storage` from `reminder`. Web imports both.
 
@@ -67,29 +72,42 @@ Do **not** import `storage` from `reminder`. Web imports both.
 cmd/server/main.go          # Load config, open DB, start HTTP server
 internal/
   auth/password.go          # bcrypt HashPassword / CheckPassword
-  config/config.go          # DATABASE_URL, WEB_PORT, SESSION_KEY, ADMIN_EMAILS
+  config/config.go          # DATABASE_URL, WEB_PORT, SESSION_KEY, ADMIN_EMAILS, RESEND, TELEGRAM
   reminder/reminder.go      # Reminder struct, CreateInput, UpdateInput, ListFilter
+  reminder/snooze.go        # Snooze presets (+15m, +1h, +3h, tomorrow_9am)
+  scheduler/runner.go       # Due-reminder poller, delivery dispatch + retries
+  notify/                   # Email (Resend) and Telegram send helpers
   storage/
     db.go                   # Open(), Close(), connection + admin email set
     indexes.go              # ensureIndexes() on startup
-    users.go                # User CRUD, notifications pause
+    users.go                # User CRUD, notifications pause, quiet hours
     sessions.go             # Session tokens, TTL
     reminders.go            # User-scoped reminder CRUD
+    deliveries.go           # reminder_deliveries outbox (pending/sent/failed/skipped)
+    scheduler_queries.go    # ListDueReminders, GetUserNotifyState
+    telegram.go             # Link tokens, chat ID lookup
+    password_reset.go       # Password reset tokens
     admin.go                # Admin ops: all users/reminders, stats, cascade delete
+    notifications.go        # Delivery settings (Resend/Telegram) in system_settings
     storage_test.go         # Integration test (needs DATABASE_URL)
   web/
     server.go               # Routes, embed static, ListenAndServe
     middleware.go           # requireSession, requireAdmin, context user ID
-    auth.go                 # signup/login/logout/me
-    reminders.go            # User reminder handlers
+    auth.go                 # signup/login/logout/me, forgot/reset password
+    reminders.go            # User reminder handlers + snooze presets
+    deliveries.go           # Delivery log + in-app notifications list
+    telegram.go             # Telegram webhook + link token API
+    password_reset.go       # Forgot/reset password handlers
+    notifications.go        # User alert channel settings
     admin.go                # Admin API handlers
     json.go                 # writeJSON, writeError, decodeJSON
     static/                 # Embedded frontend (edit → rebuild Go binary)
       index.html
       js/api.js             # fetch wrapper
       js/components.js      # toasts, drawers, cards, theme
-      js/app.js             # Main SPA routes (#/today, #/reminders, #/settings)
+      js/app.js             # Main SPA routes (#/today, #/reminders, #/settings, drawers)
       js/admin.js           # Admin panel (#/admin, #/admin/users, #/admin/reminders)
+      sw.js                 # PWA service worker (static shell cache)
       css/theme.css         # CSS variables (dark/light)
       css/app.css           # Layout and components
 docker-compose.yml          # MongoDB 7
@@ -132,6 +150,8 @@ Indexes created in `storage/indexes.go` on every `Open()`.
   "notifications_paused": false,
   "notifications_paused_until": null,
   "notification_prefs": [{ "channel": "email", "enabled": true, "address": "..." }],
+  "quiet_start": "22:00",
+  "quiet_end": "08:00",
   "created_at": "UTC",
   "updated_at": "UTC"
 }
@@ -173,7 +193,31 @@ TTL index on `expires_at` auto-deletes expired sessions.
 }
 ```
 
-**Not implemented yet:** scheduler to fire alerts on due reminders; `lists`, `reminder_deliveries`, auto Telegram link flow.
+**Scheduler:** `internal/scheduler` polls every 30s, creates `reminder_deliveries` rows, sends via enabled channels. Respects vacation mode, quiet hours (urgent bypasses), paused/snoozed reminders. Retries failed sends up to 3 times.
+
+### `reminder_deliveries`
+
+```json
+{
+  "_id": "uuid",
+  "reminder_id": "uuid",
+  "user_id": "uuid",
+  "channel": "email|telegram",
+  "status": "pending|sent|failed|skipped",
+  "attempt_count": 0,
+  "last_error": "",
+  "sent_at": null,
+  "idempotency_key": "reminder_id:channel:due_at",
+  "created_at": "UTC",
+  "updated_at": "UTC"
+}
+```
+
+### `telegram_link_tokens` / `password_reset_tokens`
+
+Short-lived tokens for bot linking and password reset emails.
+
+**Not implemented yet:** `lists`, tags, recurrence.
 
 ---
 
@@ -189,6 +233,9 @@ All JSON. Errors: `{"error":"message"}` with appropriate status code.
 | POST | `/api/auth/signup` | body: email, password, display_name, timezone → sets cookie |
 | POST | `/api/auth/login` | body: email, password → sets cookie |
 | POST | `/api/auth/logout` | Clears cookie |
+| POST | `/api/auth/forgot-password` | body: email — sends reset link if Resend configured |
+| POST | `/api/auth/reset-password` | body: token, password |
+| POST | `/api/webhooks/telegram` | Telegram bot webhook (`/start`, `/list`, `/done`, `/snooze`, `/help`) |
 
 ### Authenticated (cookie `dr_session`)
 
@@ -198,14 +245,18 @@ All JSON. Errors: `{"error":"message"}` with appropriate status code.
 | POST | `/api/me/notifications/pause` | body: optional `until` ISO8601 |
 | POST | `/api/me/notifications/resume` | |
 | GET | `/api/me/notification-channels` | User email/Telegram alert prefs + availability |
-| PATCH | `/api/me/notification-channels` | body: `{ email: {enabled, address}, telegram: {enabled, address} }` |
+| PATCH | `/api/me/notification-channels` | body: `{ email, telegram, quiet_start, quiet_end }` |
+| POST | `/api/me/telegram/link` | Returns bot link command for Telegram pairing |
+| GET | `/api/notifications` | Recent delivery attempts for current user |
+| GET | `/api/snooze/presets` | Available snooze preset keys |
 | GET | `/api/reminders` | query: `status`, `q`, `from`, `to` (RFC3339) |
 | POST | `/api/reminders` | body: title, description, due_at, timezone, priority |
 | GET/PATCH/DELETE | `/api/reminders/{id}` | User-scoped |
+| GET | `/api/reminders/{id}/deliveries` | Delivery log for one reminder |
 | POST | `/api/reminders/{id}/done` | Sets status done + completed_at |
 | POST | `/api/reminders/{id}/pause` | optional resume_at |
 | POST | `/api/reminders/{id}/resume` | |
-| POST | `/api/reminders/{id}/snooze` | body: `until` RFC3339 |
+| POST | `/api/reminders/{id}/snooze` | body: `preset` (+15m, +1h, +3h, tomorrow_9am) or `until` RFC3339 |
 
 ### Admin (session + `is_admin`)
 
@@ -219,7 +270,7 @@ All JSON. Errors: `{"error":"message"}` with appropriate status code.
 | DELETE | `/api/admin/users/{id}/sessions` | Revoke all sessions |
 | GET/POST | `/api/admin/reminders` | list (user_id, status, q, from, to) / create (needs user_id) |
 | GET/PATCH/DELETE | `/api/admin/reminders/{id}` | Cross-user |
-| POST | `/api/admin/reminders/{id}/done\|pause\|resume\|snooze` | Same as user routes |
+| POST | `/api/admin/reminders/{id}/done\|pause\|resume\|snooze` | Same as user routes (snooze accepts preset or until) |
 
 Storage errors: `ErrNotFound` → 404, `ErrConflict` → 409 (duplicate email).
 
@@ -229,11 +280,11 @@ Storage errors: `ErrNotFound` → 404, `ErrConflict` → 409 (duplicate email).
 
 **No bundler.** Edit files in `internal/web/static/`, then rebuild/restart Go server.
 
-**Routing:** hash-based (`#/today`, `#/reminders`, `#/settings`, `#/admin/...`).
+**Routing:** hash-based (`#/today`, `#/reminders`, `#/settings`, `#/reset-password`, `#/admin/...`).
 
 | File | Role |
 |------|------|
-| `app.js` | Auth gate, main shell, today/all/settings views, create reminder drawer |
+| `app.js` | Auth gate, main shell, today/all/settings views, create/detail/notification drawers, password reset, SW registration |
 | `admin.js` | Admin shell, dashboard, user/reminder tables, admin drawers |
 | `components.js` | Shared UI: `showToast`, `openDrawer`, `reminderCardHTML`, theme toggle |
 | `api.js` | `API.get/post/patch/delete` with credentials |
@@ -306,21 +357,23 @@ Set `ADMIN_EMAILS=their@email.com` in `.env`, restart server. Existing user gets
 **Done**
 
 - MongoDB storage + indexes
-- Auth (signup, login, session cookie, logout)
-- Reminder CRUD + pause/resume/snooze/done
-- Vacation mode (pause all notifications)
-- User alert channels (email address + Telegram chat ID)
+- Auth (signup, login, session cookie, logout, forgot/reset password)
+- Reminder CRUD + pause/resume/snooze/done (presets: +15m, +1h, +3h, tomorrow 9am)
+- Vacation mode (pause all notifications) + quiet hours
+- User alert channels (email address + Telegram chat ID / bot link)
 - Admin delivery settings (Resend API + Telegram bot) with test send
-- Embedded web UI (Today, All, Settings, alert channels)
+- Scheduler: due-reminder dispatch with outbox, retries, vacation/quiet-hour gates
+- Telegram bot webhook (`/start`, `/list`, `/done`, `/snooze`)
+- Delivery log API + in-app notification bell
+- Embedded web UI (Today, All, Settings, alert channels, detail drawer)
 - Admin API + admin panel UI
+- PWA service worker (static shell cache)
 
 **Not done** (see `docs/plans/2026-09-11-day-remind.md`)
 
-- Scheduler to dispatch alerts when reminders are due
 - Lists, tags, recurrence
 - JSON import/export UI
 - Google/Gmail sync
-- Scheduler/worker for outbound notifications
 
 ---
 

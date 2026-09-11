@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/shivam-20/day-remind/internal/config"
+	"github.com/shivam-20/day-remind/internal/scheduler"
 	"github.com/shivam-20/day-remind/internal/storage"
 	"github.com/shivam-20/day-remind/internal/web"
 )
@@ -20,9 +24,20 @@ func main() {
 	}
 	defer db.Close()
 
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	sched := scheduler.New(db, cfg)
+	go sched.Run(ctx)
+
 	srv := web.New(cfg, db)
-	if err := srv.ListenAndServe(); err != nil {
-		log.Println(err)
-		os.Exit(1)
-	}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil {
+			log.Println(err)
+			cancel()
+		}
+	}()
+
+	<-ctx.Done()
+	log.Println("shutting down")
 }

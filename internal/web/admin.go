@@ -430,9 +430,32 @@ func (s *Server) handleAdminSnoozeReminder(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	until, err := time.Parse(time.RFC3339, body.Until)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "until must be RFC3339")
+	var until time.Time
+	if body.Preset != "" {
+		cur, err := s.db.AdminGetReminder(r.Context(), id)
+		if err == storage.ErrNotFound {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not load reminder")
+			return
+		}
+		t, err := reminder.SnoozeUntil(body.Preset, time.Now().UTC(), cur.Timezone)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		until = t
+	} else if body.Until != "" {
+		t, err := time.Parse(time.RFC3339, body.Until)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "until must be RFC3339")
+			return
+		}
+		until = t
+	} else {
+		writeError(w, http.StatusBadRequest, "preset or until required")
 		return
 	}
 	item, err := s.db.AdminSnoozeReminder(r.Context(), id, until)
