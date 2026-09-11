@@ -52,6 +52,8 @@ type notificationPrefDoc struct {
 	Address string `bson:"address"`
 }
 
+const defaultMaxActiveReminders = 50
+
 type userDoc struct {
 	ID                       uuid.UUID             `bson:"_id"`
 	Email                    string                `bson:"email"`
@@ -65,8 +67,20 @@ type userDoc struct {
 	QuietStart               string                `bson:"quiet_start,omitempty"`
 	QuietEnd                 string                `bson:"quiet_end,omitempty"`
 	NotificationPrefs        []notificationPrefDoc `bson:"notification_prefs"`
+	MorningDigestEnabled     bool                  `bson:"morning_digest_enabled"`
+	MorningDigestTime        string                `bson:"morning_digest_time,omitempty"`
+	EmailIngestToken         string                `bson:"email_ingest_token,omitempty"`
+	EscalationOrder          []string              `bson:"escalation_order,omitempty"`
+	TOTPSecret               string                `bson:"totp_secret,omitempty"`
+	TOTPEnabled              bool                  `bson:"totp_enabled"`
+	MaxActiveReminders       int                   `bson:"max_active_reminders"`
+	WeeklyBackupEnabled      bool                  `bson:"weekly_backup_enabled"`
 	CreatedAt                time.Time             `bson:"created_at"`
 	UpdatedAt                time.Time             `bson:"updated_at"`
+}
+
+func defaultEscalationOrder() []string {
+	return []string{ChannelEmail, ChannelTelegram}
 }
 
 func userFromDoc(doc userDoc) User {
@@ -96,16 +110,18 @@ func (db *DB) CreateUser(ctx context.Context, email, passwordHash, displayName, 
 	id := uuid.New()
 	now := time.Now().UTC()
 	doc := userDoc{
-		ID:           id,
-		Email:        email,
-		PasswordHash: passwordHash,
-		DisplayName:  strings.TrimSpace(displayName),
-		Timezone:     timezone,
-		Locale:       "en",
-		IsAdmin:      db.isConfiguredAdmin(email),
-		NotificationPrefs: defaultNotificationPrefs(email),
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:                 id,
+		Email:              email,
+		PasswordHash:       passwordHash,
+		DisplayName:        strings.TrimSpace(displayName),
+		Timezone:           timezone,
+		Locale:             "en",
+		IsAdmin:            db.isConfiguredAdmin(email),
+		NotificationPrefs:  defaultNotificationPrefs(email),
+		EscalationOrder:    defaultEscalationOrder(),
+		MaxActiveReminders: defaultMaxActiveReminders,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 	_, err := db.collection("users").InsertOne(ctx, doc)
 	if err != nil {

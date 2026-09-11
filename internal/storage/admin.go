@@ -88,16 +88,18 @@ func (db *DB) CreateUserAdmin(ctx context.Context, email, passwordHash, displayN
 	id := uuid.New()
 	now := time.Now().UTC()
 	doc := userDoc{
-		ID:           id,
-		Email:        email,
-		PasswordHash: passwordHash,
-		DisplayName:  strings.TrimSpace(displayName),
-		Timezone:     timezone,
-		Locale:       "en",
-		IsAdmin:      isAdmin,
-		NotificationPrefs: defaultNotificationPrefs(email),
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:                 id,
+		Email:              email,
+		PasswordHash:       passwordHash,
+		DisplayName:        strings.TrimSpace(displayName),
+		Timezone:           timezone,
+		Locale:             "en",
+		IsAdmin:            isAdmin,
+		NotificationPrefs:  defaultNotificationPrefs(email),
+		EscalationOrder:    defaultEscalationOrder(),
+		MaxActiveReminders: defaultMaxActiveReminders,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 	_, err := db.collection("users").InsertOne(ctx, doc)
 	if err != nil {

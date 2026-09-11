@@ -55,6 +55,10 @@ func Open(databaseURL string, adminEmails []string) (*DB, error) {
 		_ = client.Disconnect(context.Background())
 		return nil, err
 	}
+	if err := store.seedSystemTemplates(ctx); err != nil {
+		_ = client.Disconnect(context.Background())
+		return nil, fmt.Errorf("seed system templates: %w", err)
+	}
 	return store, nil
 }
 
