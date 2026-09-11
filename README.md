@@ -66,16 +66,13 @@ Set `ADMIN_EMAILS` in `.env` (comma-separated) to grant admin access. Admins see
 
 ## MVP status
 
-- [x] MongoDB collections + indexes
-- [x] Auth (signup, login, session cookie, forgot/reset password)
-- [x] Reminder CRUD + pause/resume/snooze/done (presets)
-- [x] Vacation mode + quiet hours
-- [x] Embedded web UI (Today, All, Settings, drawers, notification bell)
-- [x] Admin panel UI (users, reminders, dashboard, delivery settings)
-- [x] User alert channels (email + Telegram)
-- [x] Admin delivery config (Resend + Telegram bot)
-- [x] Scheduled alert dispatch on due reminders (scheduler + outbox)
-- [x] Telegram bot webhook + link flow
-- [x] PWA service worker
-- [ ] JSON import/export UI (Phase 8)
-- [ ] Google/Gmail sync (Phase 11)
+- [x] MongoDB + auth + reminders + scheduler + delivery
+- [x] Lists, tags, search, dashboard stats
+- [x] Calendar view + subtasks
+- [x] Recurrence (RRULE) + advance alert offsets
+- [x] Extended channels (web push, SMS, Slack)
+- [x] JSON/CSV/iCal import & export + templates + API keys
+- [x] NL parse, email ingest, morning digest, escalation
+- [x] Sharing, groups, comments
+- [x] Google OAuth + calendar/Gmail sync (requires credentials)
+- [x] Webhooks, 2FA, plan limits, admin panel

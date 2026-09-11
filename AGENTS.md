@@ -129,6 +129,12 @@ docs/plans/                 # Implementation roadmap
 | `RESEND_API_KEY` | no | Resend API key for email alerts (admin can also set in DB) |
 | `EMAIL_FROM` | no | Sender address for email alerts |
 | `TELEGRAM_BOT_TOKEN` | no | Telegram bot token (admin can also set in DB) |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URL` | no | Google OAuth for Calendar/Gmail sync |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | no | Web push notifications |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM` | no | SMS channel |
+| `GEMINI_API_KEY` | no | Optional LLM for NL parse (rule-based fallback works without it) |
+| `WEBHOOK_BASE_URL` | no | Public base URL for outbound webhooks |
+| `MAX_FREE_REMINDERS` | no | Plan limit (default 50) |
 
 ---
 
@@ -354,26 +360,28 @@ Set `ADMIN_EMAILS=their@email.com` in `.env`, restart server. Existing user gets
 
 ## MVP status
 
-**Done**
+**Done (Phases 0–12 MVP)**
 
-- MongoDB storage + indexes
-- Auth (signup, login, session cookie, logout, forgot/reset password)
-- Reminder CRUD + pause/resume/snooze/done (presets: +15m, +1h, +3h, tomorrow 9am)
-- Vacation mode (pause all notifications) + quiet hours
-- User alert channels (email address + Telegram chat ID / bot link)
-- Admin delivery settings (Resend API + Telegram bot) with test send
-- Scheduler: due-reminder dispatch with outbox, retries, vacation/quiet-hour gates
-- Telegram bot webhook (`/start`, `/list`, `/done`, `/snooze`)
-- Delivery log API + in-app notification bell
-- Embedded web UI (Today, All, Settings, alert channels, detail drawer)
-- Admin API + admin panel UI
-- PWA service worker (static shell cache)
+- MongoDB storage + indexes (users, reminders, lists, tags, subtasks, offsets, occurrences, deliveries, templates, shares, groups, comments, webhooks, google integrations, API keys)
+- Auth: signup/login/logout, forgot/reset password, TOTP 2FA, personal API keys (`dr_…` Bearer on `/api/v1/*`)
+- Reminders: CRUD, pause/resume/snooze/done, recurrence (RRULE), advance offsets, subtasks, channel overrides
+- Organization: lists (with list pause), tags, search/filters, dashboard stats
+- Calendar API + month UI; lists page
+- Scheduler: due reminders + occurrences, list/vacation/quiet-hour gates, escalation, morning digest
+- Channels: email, Telegram, web push, SMS (Twilio), Slack webhook
+- Import/export: JSON backup/restore, CSV, iCal; reminder templates
+- NL quick-add (`POST /api/reminders/parse`), email ingest webhook
+- Sharing, groups, comments on reminders
+- Google OAuth connect + calendar/gmail sync scaffolding (requires Google credentials)
+- User webhooks, admin panel
+- PWA service worker; UI routes in `app.js` + `features.js`
 
-**Not done** (see `docs/plans/2026-09-11-day-remind.md`)
+**Optional / production hardening**
 
-- Lists, tags, recurrence
-- JSON import/export UI
-- Google/Gmail sync
+- Gmail Pub/Sub real-time ingest (poll-based MVP exists)
+- S3 file attachments (link URL supported on reminders)
+- Flutter mobile app (Tier 3)
+- Full Playwright E2E suite
 
 ---
 
