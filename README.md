@@ -24,6 +24,8 @@ go run ./cmd/server
 
 Open http://localhost:8090
 
+**Public deploy on this home PC** (OCI reverse tunnel + Caddy `/remind`): see **`AGENTS.md` → Production deploy**. Generic playbook: `~/oracle-home-ssh/docs/DEPLOY-APP.md`.
+
 ## Development
 
 ```bash

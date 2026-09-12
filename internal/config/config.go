@@ -26,6 +26,7 @@ type Config struct {
 	GeminiAPIKey       string
 	WebhookBaseURL     string
 	MaxFreeReminders   int
+	BasePath           string
 }
 
 func Load() (Config, error) {
@@ -72,6 +73,7 @@ func Load() (Config, error) {
 		GeminiAPIKey:       strings.TrimSpace(os.Getenv("GEMINI_API_KEY")),
 		WebhookBaseURL:     strings.TrimSpace(os.Getenv("WEBHOOK_BASE_URL")),
 		MaxFreeReminders:   maxFree,
+		BasePath:           strings.Trim(os.Getenv("APP_BASE_PATH"), "/"),
 	}, nil
 }
 

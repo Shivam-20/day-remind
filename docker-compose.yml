@@ -1,11 +1,12 @@
 services:
   mongo:
     image: mongo:7
+    restart: unless-stopped
     environment:
       MONGO_INITDB_ROOT_USERNAME: dayremind
       MONGO_INITDB_ROOT_PASSWORD: dayremind
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     volumes:
       - day_remind_mongo:/data/db
     healthcheck:
@@ -14,5 +15,25 @@ services:
       timeout: 5s
       retries: 5
 
+  app:
+    build: .
+    container_name: day-remind-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # container reaches mongo by service name (overrides localhost .env value)
+      DATABASE_URL: mongodb://dayremind:dayremind@mongo:27017/day_remind?authSource=admin
+    networks:
+      - default
+      - apps-net
+    depends_on:
+      mongo:
+        condition: service_healthy
+
 volumes:
   day_remind_mongo:
+
+networks:
+  apps-net:
+    external: true

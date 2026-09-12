@@ -208,6 +208,10 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing index", http.StatusInternalServerError)
 		return
 	}
+	if s.cfg.BasePath != "" {
+		base := "/" + s.cfg.BasePath + "/"
+		b = []byte(strings.Replace(string(b), "<head>", "<head><base href=\""+base+"\">", 1))
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 	_, _ = w.Write(b)

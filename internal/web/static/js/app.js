@@ -619,6 +619,11 @@ function renderResetPassword(token) {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+    // Relative to <base> so /remind/static/sw.js works behind the OCI path proxy.
+    // Skip when base path is set — SW scope under /static/ is wrong for subpath deploys.
+    const base = typeof API !== 'undefined' ? API.base() : '';
+    if (!base) {
+      navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+    }
   });
 }

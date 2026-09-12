@@ -11,21 +11,124 @@ Guide for AI agents working in this repository. Read this before making changes.
 - **HTTP:** chi router, JSON API, session cookies
 - **Module:** `github.com/shivam-20/day-remind`
 - **Entrypoint:** `cmd/server/main.go`
-- **Default URL:** http://localhost:8090
+- **Default local URL:** http://localhost:8090 (host-published only if you map the port)
+- **Production URL on this machine:** http://161.118.181.5/remind/ (OCI reverse tunnel + home Caddy)
 
 ---
 
-## Quick start
+## Quick start (local)
 
 ```bash
 cp .env.example .env          # set SESSION_KEY (32+ chars), optional ADMIN_EMAILS
-docker compose up -d          # MongoDB on port 27017
-go run ./cmd/server
+docker compose up -d          # MongoDB (+ app container when using compose `app` service)
+go run ./cmd/server           # or: docker compose up -d --build app
 go test ./...
 go build -o bin/day-remind ./cmd/server
 ```
 
 CI (`.github/workflows/ci.yml`) runs tests against a MongoDB service container.
+
+---
+
+## Production deploy (THIS MACHINE — mandatory for public access)
+
+When the user asks to **deploy / publish / expose day-remind**, do it **only** via the home OCI reverse-tunnel + Caddy path proxy. Do **not** open Airtel router ports, Tailscale Funnel, or Oracle `:80`/`:443` for this app.
+
+### Architecture (how traffic reaches the app)
+
+```text
+Browser
+  → http://161.118.181.5/remind/...          # Oracle Caddy IP vhost :80
+      → 127.0.0.1:18080 on Oracle            # SSH -R from home
+          → 127.0.0.1:8080 home              # Docker Caddy (~/apps/caddy)
+              → strip /remind
+                  → day-remind-app:8090      # this compose service on apps-net
+
+  → http://161.118.181.5:18080/remind/...    # same tunnel, skip Oracle Caddy
+```
+
+| Piece | Location | Notes |
+|-------|----------|-------|
+| App + Mongo | this repo `docker compose` | `app` on external Docker network `apps-net`; Mongo on `127.0.0.1:27017` |
+| Path proxy | `~/apps/caddy/Caddyfile` | `handle /remind* { uri strip_prefix /remind; reverse_proxy day-remind-app:8090 }` |
+| Landing | `~/apps/caddy/www/index.html` | List `/remind` as live |
+| Tunnel | `oracle-reverse-ssh.service` | Forwards OCI `:18080` → home Caddy `:8080` (+ SSH `:2222`) |
+| Playbook | `~/oracle-home-ssh/docs/DEPLOY-APP.md` | Generic multi-app deploy rules |
+
+### Required env for path deploy
+
+In `.env` (already used on this machine):
+
+```bash
+WEB_PORT=8090
+APP_BASE_PATH=/remind
+# Prefer the public URL once live:
+# WEBHOOK_BASE_URL=http://161.118.181.5/remind
+# GOOGLE_REDIRECT_URL=http://161.118.181.5/remind/api/integrations/google/callback
+```
+
+`APP_BASE_PATH` makes `serveIndex` inject `<base href="/remind/">`. That only works if static tags are **relative** and API calls go through `API.url()` (see below).
+
+### Deploy / update checklist (follow in order)
+
+1. **Preconditions**
+   ```bash
+   ~/oracle-home-ssh/bin/ohssh app-status
+   docker network inspect apps-net >/dev/null   # must exist; caddy + day-remind-app on it
+   ```
+2. **Build & run this app** (from repo root)
+   ```bash
+   docker compose up -d --build app
+   # confirm: docker ps --filter name=day-remind-app
+   # confirm from Caddy network:
+   docker exec caddy wget -qO- http://day-remind-app:8090/api/health
+   ```
+3. **Home Caddy route** — ensure `~/apps/caddy/Caddyfile` contains:
+   ```caddy
+   handle /remind* {
+       uri strip_prefix /remind
+       reverse_proxy day-remind-app:8090
+   }
+   ```
+   Reload: `cd ~/apps/caddy && docker compose up -d`
+4. **Landing page** — `/remind` marked live in `~/apps/caddy/www/index.html`.
+5. **Verify**
+   ```bash
+   curl -fsS http://161.118.181.5/remind/api/health
+   curl -fsS -o /dev/null -w '%{http_code} %{content_type}\n' \
+     http://161.118.181.5/remind/static/css/app.css
+   # expect: 200 text/css
+   # browser: http://161.118.181.5/remind/  → full Sign-in UI (not only "Skip to content")
+   ```
+
+### Do **not** do these
+
+- Publish host port `8090` publicly (compose may omit host publish on purpose; reach via Caddy/`apps-net`).
+- Proxy Oracle `:80` yourself or edit Oracle duckdns Caddy for day-remind (IP vhost already forwards to home `:18080`).
+- Open a **new** OCI security-list port for each app (reuse `18080` / `80`).
+- Use absolute `/static/...` or raw `fetch('/api/...')` without `API.url()` when `APP_BASE_PATH` is set — browsers ignore `<base>` for absolute paths and you get a blank page showing only **Skip to content**.
+
+### Base-path rules (keep working)
+
+| Layer | Rule |
+|-------|------|
+| `internal/web/static/index.html` | Asset `href`/`src` must be **relative**: `static/css/...`, not `/static/...` |
+| `internal/web/static/js/api.js` | All API traffic via `API.url(path)` / `API.request` (prefixes `APP_BASE_PATH`) |
+| Other JS | Any `fetch('/api/...')` or `href="/api/..."` must use `API.url(...)` |
+| `server.go` | Injects `<base href="/{APP_BASE_PATH}/">` when `BasePath` non-empty |
+| Caddy | `uri strip_prefix /remind` so the Go app still sees `/api` and `/static` at root |
+| Service worker | Do not register SW under subpath deploy (scope breaks); `app.js` skips SW when base ≠ empty |
+
+After editing embedded static files: **rebuild the Docker image** (`docker compose up -d --build app`) or rebuild the Go binary — embed is compile-time.
+
+### Symptom → fix
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Only “Skip to content” visible | CSS/JS loaded from `/static` (landing Caddy) | Relative assets + rebuild |
+| `/remind/` 502 | App container down / not on `apps-net` | `docker compose up -d --build app`; check networks |
+| `/api/health` ok on container, fail on OCI | Tunnel or Caddy route | `ohssh app-status`; check Caddyfile `/remind*` |
+| Login works locally, cookies fail on OCI path | Wrong public URLs / Secure cookie later | Keep SameSite=Lax; set `WEBHOOK_BASE_URL` to public `/remind` |
 
 ---
 
@@ -110,7 +213,8 @@ internal/
       sw.js                 # PWA service worker (static shell cache)
       css/theme.css         # CSS variables (dark/light)
       css/app.css           # Layout and components
-docker-compose.yml          # MongoDB 7
+docker-compose.yml          # MongoDB 7 + app service (apps-net for home Caddy)
+Dockerfile                  # multi-stage Go build → day-remind binary
 .env.example
 docs/specs/                 # Product + UI design (some references still say Postgres)
 docs/plans/                 # Implementation roadmap
@@ -122,9 +226,10 @@ docs/plans/                 # Implementation roadmap
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DATABASE_URL` | yes | MongoDB URI, e.g. `mongodb://dayremind:dayremind@localhost:27017/day_remind?authSource=admin` |
+| `DATABASE_URL` | yes | MongoDB URI, e.g. `mongodb://dayremind:dayremind@localhost:27017/day_remind?authSource=admin` (compose overrides to `mongo:27017` for the `app` service) |
 | `SESSION_KEY` | yes | Min 32 chars (loaded but cookie is stateless token in DB today) |
 | `WEB_PORT` | no | Default `8090` |
+| `APP_BASE_PATH` | no | Public path prefix, e.g. `/remind` — **required** for OCI/Caddy path deploy |
 | `ADMIN_EMAILS` | no | Comma-separated emails auto-promoted to `is_admin: true` on startup + signup |
 | `RESEND_API_KEY` | no | Resend API key for email alerts (admin can also set in DB) |
 | `EMAIL_FROM` | no | Sender address for email alerts |
@@ -284,16 +389,17 @@ Storage errors: `ErrNotFound` → 404, `ErrConflict` → 409 (duplicate email).
 
 ## Frontend (embedded SPA)
 
-**No bundler.** Edit files in `internal/web/static/`, then rebuild/restart Go server.
+**No bundler.** Edit files in `internal/web/static/`, then **rebuild** Go binary / Docker image (embed is compile-time).
 
 **Routing:** hash-based (`#/today`, `#/reminders`, `#/settings`, `#/reset-password`, `#/admin/...`).
 
 | File | Role |
 |------|------|
-| `app.js` | Auth gate, main shell, today/all/settings views, create/detail/notification drawers, password reset, SW registration |
+| `index.html` | Shell; use **relative** `static/...` asset URLs (required for `APP_BASE_PATH`) |
+| `app.js` | Auth gate, main shell, today/all/settings views, create/detail/notification drawers, password reset, SW registration (skipped when base path set) |
 | `admin.js` | Admin shell, dashboard, user/reminder tables, admin drawers |
 | `components.js` | Shared UI: `showToast`, `openDrawer`, `reminderCardHTML`, theme toggle |
-| `api.js` | `API.get/post/patch/delete` with credentials |
+| `api.js` | `API.base()`, `API.url()`, `API.get/post/patch/delete` with credentials — **all** `/api` traffic must go through here |
 
 **Global state:** `state.user`, `state.reminders` in `app.js`; `adminState` in `admin.js`.
 
@@ -310,11 +416,13 @@ Non-admins navigating to `#/admin` are redirected to `#/today`.
 3. **Session cookie:** Name `dr_session`, HttpOnly, SameSite=Lax, 30-day TTL.
 4. **Reminder status:** Only `scheduled`, `paused`, `done`, `cancelled`.
 5. **Reminder priority:** `low`, `normal`, `high`, `urgent` (default `normal`).
-6. **Static embed:** After editing `internal/web/static/*`, run `go build` or `go run` again.
+6. **Static embed:** After editing `internal/web/static/*`, run `go build` / `go run` **or** `docker compose up -d --build app`.
 7. **Storage API:** Add new DB methods on `*storage.DB`; keep handlers thin.
 8. **JSON decode:** `decodeJSON` uses `DisallowUnknownFields` — match request struct tags.
 9. **Imports:** Top of file only (no inline imports).
 10. **Scope:** Minimal diffs; match existing naming and patterns; avoid over-abstraction.
+11. **Public deploy:** Use OCI reverse tunnel + `~/apps/caddy` path `/remind` only (see **Production deploy** above). Never invent a second public entry for this app without user approval.
+12. **Base path:** Keep relative static URLs + `API.url()`; never reintroduce root-absolute `/static/...` asset tags.
 
 ---
 
@@ -356,6 +464,24 @@ DATABASE_URL=mongodb://... go test ./internal/storage/...
 
 Set `ADMIN_EMAILS=their@email.com` in `.env`, restart server. Existing user gets `is_admin: true` on startup; new signups with that email are admin immediately.
 
+### Deploy or update the public OCI URL
+
+Follow **Production deploy (THIS MACHINE)** end-to-end. Short form:
+
+```bash
+# in this repo
+docker compose up -d --build app
+
+# home Caddy route must exist for /remind* → day-remind-app:8090
+cd ~/apps/caddy && docker compose up -d
+
+# verify
+curl -fsS http://161.118.181.5/remind/api/health
+~/oracle-home-ssh/bin/ohssh app-status
+```
+
+If the UI shows only “Skip to content”, fix base-path asset/API rules and rebuild — do not “fix” it by publishing `:8090` on the host.
+
 ---
 
 ## MVP status
@@ -393,8 +519,11 @@ Set `ADMIN_EMAILS=their@email.com` in `.env`, restart server. Existing user gets
 | `docs/specs/2026-09-11-day-remind-design.md` | Full product vision (DB section outdated — now MongoDB) |
 | `docs/specs/2026-09-11-day-remind-ui-design.md` | UI/UX spec |
 | `docs/plans/2026-09-11-day-remind.md` | Phased implementation checklist |
+| `~/oracle-home-ssh/docs/DEPLOY-APP.md` | **Home-machine multi-app OCI/Caddy deploy playbook (LLMs)** |
+| `~/oracle-home-ssh/docs/ACCESS.md` | How to reach this PC (SSH + apps) |
+| `~/apps/caddy/README.md` | Home Caddy path proxy |
 
-When specs conflict with code, **trust the code** and update docs if asked.
+When specs conflict with code, **trust the code** and update docs if asked. For **how to publish on this PC**, trust **Production deploy** in this file + `DEPLOY-APP.md`.
 
 ---
 
@@ -404,4 +533,7 @@ When specs conflict with code, **trust the code** and update docs if asked.
 - **Postgres references:** Removed; do not reintroduce pgx/goose without explicit request.
 - **Admin self-delete:** Blocked in `handleAdminDeleteUser`.
 - **Delete user:** Cascades reminders + sessions in `storage.DeleteUser`.
-- **Embedded static caching:** Browser may cache `/static/*`; HTML sets `no-cache` on `/`.
+- **Embedded static caching:** Browser may cache static assets; HTML sets `no-cache` on index. Hard-refresh after deploys.
+- **Subpath deploy:** Absolute `/static/...` + `<base href="/remind/">` = blank UI (“Skip to content” only). Use relative assets + `API.url()`.
+- **Caddy `localhost`:** From the Caddy container, do not proxy to `localhost`/`127.0.0.1` for this app — use Docker DNS name `day-remind-app` on `apps-net` (or `host.docker.internal` for host-network processes).
+- **Oracle ports:** Do not bind home apps to Oracle `:80`/`:443`/`:8080` (duckdns/memory already use them). Public path is `/remind` via home Caddy on tunnel `:18080`.

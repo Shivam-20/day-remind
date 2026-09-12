@@ -227,8 +227,8 @@ async function renderDataSettings() {
       <h3>Export</h3>
       <p class="page-sub">Download your reminders and settings</p>
       <div class="inline-actions">
-        <a class="btn btn-primary btn-sm" href="/api/export/json" download>Export JSON</a>
-        <a class="btn btn-sm" href="/api/export/ical" download>Export iCal</a>
+        <a class="btn btn-primary btn-sm" href="${API.url('/api/export/json')}" download>Export JSON</a>
+        <a class="btn btn-sm" href="${API.url('/api/export/ical')}" download>Export iCal</a>
       </div>
     </div>
     <div class="card">
@@ -291,7 +291,7 @@ async function renderDataSettings() {
     const form = new FormData();
     form.append('file', pendingFile);
     const isJson = pendingFile.name.endsWith('.json');
-    const url = isJson ? `/api/import/json?mode=${encodeURIComponent(mode)}` : '/api/import/ical';
+    const url = API.url(isJson ? `/api/import/json?mode=${encodeURIComponent(mode)}` : '/api/import/ical');
     try {
       const res = await fetch(url, { method: 'POST', credentials: 'include', body: isJson ? await pendingFile.text() : form });
       const data = await res.json();
@@ -421,7 +421,7 @@ async function renderAccountSettings() {
   try {
     const [keysData, setupData] = await Promise.all([
       API.get('/api/api-keys'),
-      fetch('/api/me/2fa/setup', { method: 'POST', credentials: 'include' }).catch(() => null),
+      fetch(API.url('/api/me/2fa/setup'), { method: 'POST', credentials: 'include' }).catch(() => null),
     ]);
     keys = keysData.api_keys || [];
     if (setupData?.ok) {
