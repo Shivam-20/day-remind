@@ -14,6 +14,14 @@ import (
 
 const defaultDatabase = "day_remind"
 
+// hardcodedAdminEmails is the code-only source of admin access.
+// Public signup (CreateUser) NEVER grants admin, even for these emails —
+// they are promoted on startup via EnsureAdminEmails and cannot be
+// demoted or deleted through the API. Edit this list to change admins.
+var hardcodedAdminEmails = []string{
+	"shivamap20@gmail.com",
+}
+
 type DB struct {
 	client      *mongo.Client
 	db          *mongo.Database
@@ -46,10 +54,14 @@ func Open(databaseURL string, adminEmails []string) (*DB, error) {
 		_ = client.Disconnect(context.Background())
 		return nil, err
 	}
+	mergedAdmins := normalizeAdminEmails(adminEmails)
+	for email := range normalizeAdminEmails(hardcodedAdminEmails) {
+		mergedAdmins[email] = struct{}{}
+	}
 	store := &DB{
 		client:      client,
 		db:          database,
-		adminEmails: normalizeAdminEmails(adminEmails),
+		adminEmails: mergedAdmins,
 	}
 	if err := store.EnsureAdminEmails(ctx); err != nil {
 		_ = client.Disconnect(context.Background())
@@ -80,6 +92,21 @@ func (db *DB) isConfiguredAdmin(email string) bool {
 	}
 	_, ok := db.adminEmails[email]
 	return ok
+}
+
+// isHardcodedAdmin reports whether the email is in the code-only admin list.
+// Hardcoded admins cannot be demoted or deleted through the API.
+func isHardcodedAdmin(email string) bool {
+	email = strings.TrimSpace(strings.ToLower(email))
+	if email == "" {
+		return false
+	}
+	for _, admin := range hardcodedAdminEmails {
+		if strings.TrimSpace(strings.ToLower(admin)) == email {
+			return true
+		}
+	}
+	return false
 }
 
 func databaseName(databaseURL string) (string, error) {

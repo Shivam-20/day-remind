@@ -170,6 +170,9 @@ func (s *Server) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 	if err := s.db.DeleteUser(r.Context(), id); err == storage.ErrNotFound {
 		writeError(w, http.StatusNotFound, "not found")
 		return
+	} else if err == storage.ErrForbidden {
+		writeError(w, http.StatusForbidden, "this admin account is protected")
+		return
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not delete user")
 		return

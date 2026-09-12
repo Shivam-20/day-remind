@@ -112,6 +112,11 @@ func (db *DB) CreateUserAdmin(ctx context.Context, email, passwordHash, displayN
 }
 
 func (db *DB) UpdateUserAdmin(ctx context.Context, id uuid.UUID, in AdminUserUpdate) (User, error) {
+	// Hardcoded admins keep admin access — they cannot be demoted via the API.
+	current, err := db.GetUserByID(ctx, id)
+	if err != nil {
+		return User{}, err
+	}
 	set := bson.M{"updated_at": time.Now().UTC()}
 	if in.Email != nil {
 		email := strings.TrimSpace(strings.ToLower(*in.Email))
@@ -142,6 +147,11 @@ func (db *DB) UpdateUserAdmin(ctx context.Context, id uuid.UUID, in AdminUserUpd
 		set["password_hash"] = *in.PasswordHash
 	}
 
+	// A hardcoded admin stays admin: ignore any demotion request.
+	if isHardcodedAdmin(current.Email) {
+		set["is_admin"] = true
+	}
+
 	res, err := db.collection("users").UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": set})
 	if err != nil {
 		if mongo.IsDuplicateKeyError(err) {
@@ -161,6 +171,11 @@ func (db *DB) UpdateUserAdmin(ctx context.Context, id uuid.UUID, in AdminUserUpd
 }
 
 func (db *DB) DeleteUser(ctx context.Context, id uuid.UUID) error {
+	if current, err := db.GetUserByID(ctx, id); err != nil {
+		return err
+	} else if isHardcodedAdmin(current.Email) {
+		return ErrForbidden
+	}
 	if _, err := db.collection("reminders").DeleteMany(ctx, bson.M{"user_id": id}); err != nil {
 		return err
 	}

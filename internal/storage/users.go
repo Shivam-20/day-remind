@@ -14,6 +14,7 @@ import (
 
 var ErrNotFound = errors.New("not found")
 var ErrConflict = errors.New("conflict")
+var ErrForbidden = errors.New("forbidden")
 
 type User struct {
 	ID                       uuid.UUID
@@ -99,6 +100,10 @@ func userFromDoc(doc userDoc) User {
 	}
 }
 
+// CreateUser handles public signup (/api/auth/signup).
+// It ALWAYS creates a regular (non-admin) user. Admin access is granted
+// only via the hardcoded list in db.go (promoted on startup) — never
+// through account creation.
 func (db *DB) CreateUser(ctx context.Context, email, passwordHash, displayName, timezone string) (User, error) {
 	email = strings.TrimSpace(strings.ToLower(email))
 	if email == "" {
@@ -116,7 +121,7 @@ func (db *DB) CreateUser(ctx context.Context, email, passwordHash, displayName, 
 		DisplayName:        strings.TrimSpace(displayName),
 		Timezone:           timezone,
 		Locale:             "en",
-		IsAdmin:            db.isConfiguredAdmin(email),
+		IsAdmin:            false,
 		NotificationPrefs:  defaultNotificationPrefs(email),
 		EscalationOrder:    defaultEscalationOrder(),
 		MaxActiveReminders: defaultMaxActiveReminders,
