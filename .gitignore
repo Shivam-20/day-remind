@@ -2,3 +2,6 @@
 bin/
 data/
 *.db
+
+# Local editor/agent state
+.cursor/

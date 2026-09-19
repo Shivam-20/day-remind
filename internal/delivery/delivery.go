@@ -7,7 +7,6 @@ package delivery
 
 import (
 	"context"
-	"errors"
 	"log"
 	"strconv"
 
@@ -170,6 +169,3 @@ func smtpFrom(cfg storage.SMTPSettings, password string) *notify.SMTPSender {
 		Mode:     cfg.TLS,
 	}
 }
-
-// ErrNoChannel means nothing is configured to reach this user.
-var ErrNoChannel = errors.New("no delivery channel is enabled")
