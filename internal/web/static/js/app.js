@@ -189,25 +189,32 @@ function resolveRoute(route) {
 }
 
 async function renderApp(route) {
+  let openId = '';
+  const qIndex = route.indexOf('?');
+  if (qIndex >= 0) {
+    openId = new URLSearchParams(route.slice(qIndex + 1)).get('open') || '';
+    route = route.slice(0, qIndex);
+  }
   if (route.startsWith('/admin')) {
     const fn = resolveRoute(route) || routes['/admin'];
-    await fn(route);
-    return;
-  }
-  const fn = resolveRoute(route);
-  if (fn) {
     await fn(route);
     return;
   }
   if (route.startsWith('/settings')) {
     if (route === '/settings/alerts') {
       await renderAlertSettings();
-      return;
+    } else {
+      await renderSettings(route);
     }
-    await renderSettings(route);
     return;
   }
-  await routes['/today'](route);
+  const fn = resolveRoute(route);
+  if (fn) {
+    await fn(route);
+  } else {
+    await routes['/today'](route);
+  }
+  if (openId) openReminderDrawer(openId);
 }
 
 async function loadReminders(params = '') {

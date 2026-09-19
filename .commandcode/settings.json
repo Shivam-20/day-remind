@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(for b in cursor/admin-controller-4e42 cursor/agents-doc-4e42 cursor/alert-channels-4e42 cursor/migrate-to-mongodb-4e42 cursor/phase2-delivery-4e42 cursor/phases-4-12-ui-0752 cursor/phases-4-6-storage-3a52 cursor/phases-7-12-storage-69d7; do echo \"=== $b ===\"; git log --oneline -3 origin/$b 2>/dev/null; done)",
+      "Shell(for b in cursor/phases-4-6-storage-3a52 cursor/phases-7-12-storage-69d7 cursor/phases-4-12-ui-0752 cursor/admin-controller-4e42 cursor/alert-channels-4e42 cursor/agents-doc-4e42; do echo \"=== $b vs main ($(git rev-list --count origin/main..origin/$b 2>/dev/null) commits ahead) ===\"; git log --oneline origin/main..origin/$b 2>/dev/null | head -10; done)",
+      "Shell(go:*)",
+      "Shell(git:*)"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}

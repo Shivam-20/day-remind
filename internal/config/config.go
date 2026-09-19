@@ -8,25 +8,30 @@ import (
 )
 
 type Config struct {
-	DatabaseURL        string
-	WebPort            int
-	SessionKey         string
-	AdminEmails        []string
-	ResendAPIKey       string
-	EmailFrom          string
-	TelegramBotToken   string
-	GoogleClientID     string
-	GoogleClientSecret string
-	GoogleRedirectURL  string
-	VAPIDPublic        string
-	VAPIDPrivate       string
-	TwilioAccountSID   string
-	TwilioAuthToken    string
-	TwilioFrom         string
-	GeminiAPIKey       string
-	WebhookBaseURL     string
-	MaxFreeReminders   int
-	BasePath           string
+	DatabaseURL           string
+	WebPort               int
+	SessionKey            string
+	AdminEmails           []string
+	ResendAPIKey          string
+	EmailFrom             string
+	TelegramBotToken      string
+	TelegramUpdateMode    string
+	TelegramWebhookSecret string
+	GoogleClientID        string
+	GoogleClientSecret    string
+	GoogleRedirectURL     string
+	VAPIDPublic           string
+	VAPIDPrivate          string
+	TwilioAccountSID      string
+	TwilioAuthToken       string
+	TwilioFrom            string
+	GeminiAPIKey          string
+	WebhookBaseURL        string
+	MaxFreeReminders      int
+	BasePath              string
+	AuthJWTSecret         string
+	GatewayCookie         string
+	JWTIssuer             string
 }
 
 func Load() (Config, error) {
@@ -54,26 +59,47 @@ func Load() (Config, error) {
 		}
 		maxFree = n
 	}
+	tgMode := strings.ToLower(strings.TrimSpace(os.Getenv("TELEGRAM_UPDATE_MODE")))
+	switch tgMode {
+	case "", "polling":
+		tgMode = "polling"
+	case "webhook", "off":
+	default:
+		return Config{}, fmt.Errorf("invalid TELEGRAM_UPDATE_MODE: %q", tgMode)
+	}
+	gatewayCookie := strings.TrimSpace(os.Getenv("GATEWAY_COOKIE"))
+	if gatewayCookie == "" {
+		gatewayCookie = "auth_token"
+	}
+	jwtIssuer := strings.TrimSpace(os.Getenv("JWT_ISSUER"))
+	if jwtIssuer == "" {
+		jwtIssuer = "home"
+	}
 	return Config{
-		DatabaseURL:        dbURL,
-		WebPort:            port,
-		SessionKey:         sessionKey,
-		AdminEmails:        parseList(os.Getenv("ADMIN_EMAILS")),
-		ResendAPIKey:       strings.TrimSpace(os.Getenv("RESEND_API_KEY")),
-		EmailFrom:          strings.TrimSpace(os.Getenv("EMAIL_FROM")),
-		TelegramBotToken:   strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
-		GoogleClientID:     strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")),
-		GoogleClientSecret: strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET")),
-		GoogleRedirectURL:  strings.TrimSpace(os.Getenv("GOOGLE_REDIRECT_URL")),
-		VAPIDPublic:        strings.TrimSpace(os.Getenv("VAPID_PUBLIC_KEY")),
-		VAPIDPrivate:       strings.TrimSpace(os.Getenv("VAPID_PRIVATE_KEY")),
-		TwilioAccountSID:   strings.TrimSpace(os.Getenv("TWILIO_ACCOUNT_SID")),
-		TwilioAuthToken:    strings.TrimSpace(os.Getenv("TWILIO_AUTH_TOKEN")),
-		TwilioFrom:         strings.TrimSpace(os.Getenv("TWILIO_FROM")),
-		GeminiAPIKey:       strings.TrimSpace(os.Getenv("GEMINI_API_KEY")),
-		WebhookBaseURL:     strings.TrimSpace(os.Getenv("WEBHOOK_BASE_URL")),
-		MaxFreeReminders:   maxFree,
-		BasePath:           strings.Trim(os.Getenv("APP_BASE_PATH"), "/"),
+		DatabaseURL:           dbURL,
+		WebPort:               port,
+		SessionKey:            sessionKey,
+		AdminEmails:           parseList(os.Getenv("ADMIN_EMAILS")),
+		ResendAPIKey:          strings.TrimSpace(os.Getenv("RESEND_API_KEY")),
+		EmailFrom:             strings.TrimSpace(os.Getenv("EMAIL_FROM")),
+		TelegramBotToken:      strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
+		TelegramUpdateMode:    tgMode,
+		TelegramWebhookSecret: strings.TrimSpace(os.Getenv("TELEGRAM_WEBHOOK_SECRET")),
+		GoogleClientID:        strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")),
+		GoogleClientSecret:    strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET")),
+		GoogleRedirectURL:     strings.TrimSpace(os.Getenv("GOOGLE_REDIRECT_URL")),
+		VAPIDPublic:           strings.TrimSpace(os.Getenv("VAPID_PUBLIC_KEY")),
+		VAPIDPrivate:          strings.TrimSpace(os.Getenv("VAPID_PRIVATE_KEY")),
+		TwilioAccountSID:      strings.TrimSpace(os.Getenv("TWILIO_ACCOUNT_SID")),
+		TwilioAuthToken:       strings.TrimSpace(os.Getenv("TWILIO_AUTH_TOKEN")),
+		TwilioFrom:            strings.TrimSpace(os.Getenv("TWILIO_FROM")),
+		GeminiAPIKey:          strings.TrimSpace(os.Getenv("GEMINI_API_KEY")),
+		WebhookBaseURL:        strings.TrimSpace(os.Getenv("WEBHOOK_BASE_URL")),
+		MaxFreeReminders:      maxFree,
+		BasePath:              strings.Trim(os.Getenv("APP_BASE_PATH"), "/"),
+		AuthJWTSecret:         strings.TrimSpace(os.Getenv("AUTH_JWT_SECRET")),
+		GatewayCookie:         gatewayCookie,
+		JWTIssuer:             jwtIssuer,
 	}, nil
 }
 

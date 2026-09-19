@@ -71,6 +71,10 @@ type userDoc struct {
 	MorningDigestTime        string                `bson:"morning_digest_time,omitempty"`
 	NotificationPrefs        []notificationPrefDoc `bson:"notification_prefs"`
 	EmailIngestToken         string                `bson:"email_ingest_token,omitempty"`
+	TelegramChatID           string                `bson:"telegram_chat_id,omitempty"`
+	TelegramUsername         string                `bson:"telegram_username,omitempty"`
+	TelegramFirstName        string                `bson:"telegram_first_name,omitempty"`
+	TelegramLinkedAt         *time.Time            `bson:"telegram_linked_at,omitempty"`
 	EscalationOrder          []string              `bson:"escalation_order,omitempty"`
 	TOTPSecret               string                `bson:"totp_secret,omitempty"`
 	TOTPEnabled              bool                  `bson:"totp_enabled"`
@@ -168,7 +172,7 @@ func (db *DB) SetNotificationsPaused(ctx context.Context, userID uuid.UUID, paus
 		"$set": bson.M{
 			"notifications_paused":       paused,
 			"notifications_paused_until": until,
-			"updated_at":                   time.Now().UTC(),
+			"updated_at":                 time.Now().UTC(),
 		},
 	})
 	if err != nil {

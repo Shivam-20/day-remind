@@ -199,7 +199,8 @@ internal/
     auth.go                 # signup/login/logout/me, forgot/reset password
     reminders.go            # User reminder handlers + snooze presets
     deliveries.go           # Delivery log + in-app notifications list
-    telegram.go             # Telegram webhook + link token API
+    telegram.go             # Telegram dispatcher + commands + polling/webhook + link token API
+    admin_telegram.go       # Admin: linked users, unlink/message, webhook status
     password_reset.go       # Forgot/reset password handlers
     notifications.go        # User alert channel settings
     admin.go                # Admin API handlers
@@ -234,6 +235,8 @@ docs/plans/                 # Implementation roadmap
 | `RESEND_API_KEY` | no | Resend API key for email alerts (admin can also set in DB) |
 | `EMAIL_FROM` | no | Sender address for email alerts |
 | `TELEGRAM_BOT_TOKEN` | no | Telegram bot token (admin can also set in DB) |
+| `TELEGRAM_UPDATE_MODE` | no | `polling` (default, no public URL needed) \| `webhook` \| `off`. Webhook mode requires an `https` `WEBHOOK_BASE_URL` |
+| `TELEGRAM_WEBHOOK_SECRET` | no | Optional `secret_token` for webhook mode; incoming updates rejected on mismatch |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URL` | no | Google OAuth for Calendar/Gmail sync |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | no | Web push notifications |
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM` | no | SMS channel |
@@ -346,7 +349,7 @@ All JSON. Errors: `{"error":"message"}` with appropriate status code.
 | POST | `/api/auth/logout` | Clears cookie |
 | POST | `/api/auth/forgot-password` | body: email — sends reset link if Resend configured |
 | POST | `/api/auth/reset-password` | body: token, password |
-| POST | `/api/webhooks/telegram` | Telegram bot webhook (`/start`, `/list`, `/done`, `/snooze`, `/help`) |
+| POST | `/api/webhooks/telegram` | Telegram bot webhook (used only in `webhook` mode). Commands: `/add`, `/list`, `/done`, `/snooze`, `/pause`, `/resume`, `/cancel`, `/settings`, `/digest`, `/vacation`, `/unlink`, `/help` |
 
 ### Authenticated (cookie `dr_session`)
 
@@ -382,6 +385,11 @@ All JSON. Errors: `{"error":"message"}` with appropriate status code.
 | GET/POST | `/api/admin/reminders` | list (user_id, status, q, from, to) / create (needs user_id) |
 | GET/PATCH/DELETE | `/api/admin/reminders/{id}` | Cross-user |
 | POST | `/api/admin/reminders/{id}/done\|pause\|resume\|snooze` | Same as user routes (snooze accepts preset or until) |
+| GET | `/api/admin/telegram/users` | Telegram-linked users (q, limit, offset): user_id, email, chat_id, username, enabled, linked_at |
+| POST | `/api/admin/telegram/users/{id}/unlink` | Disable + clear the user's Telegram link |
+| POST | `/api/admin/telegram/users/{id}/message` | body: `{ text }` — send a Telegram DM to the linked user |
+| GET | `/api/admin/telegram/status` | Bot mode/configured + `getWebhookInfo` |
+| POST/DELETE | `/api/admin/telegram/webhook` | Register / delete the Telegram webhook (webhook mode, https only) |
 
 Storage errors: `ErrNotFound` → 404, `ErrConflict` → 409 (duplicate email).
 

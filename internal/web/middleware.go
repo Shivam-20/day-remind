@@ -15,18 +15,21 @@ const userIDKey contextKey = "userID"
 
 func (s *Server) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token := sessionTokenFromRequest(r)
-		if token == "" {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
+		// Primary path: day-remind's own session cookie (opaque token in Mongo).
+		if token := sessionTokenFromRequest(r); token != "" {
+			if userID, err := s.db.GetSessionUserID(r.Context(), token); err == nil {
+				ctx := context.WithValue(r.Context(), userIDKey, userID)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+		}
+		// Fallback: shared gateway JWT (auth_token cookie) from the home page.
+		if userID, ok := s.userFromGateway(r); ok {
+			ctx := context.WithValue(r.Context(), userIDKey, userID)
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
-		userID, err := s.db.GetSessionUserID(r.Context(), token)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
-			return
-		}
-		ctx := context.WithValue(r.Context(), userIDKey, userID)
-		next.ServeHTTP(w, r.WithContext(ctx))
+		writeError(w, http.StatusUnauthorized, "unauthorized")
 	})
 }
 

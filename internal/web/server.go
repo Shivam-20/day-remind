@@ -183,6 +183,13 @@ func (s *Server) Handler() http.Handler {
 		ar.Post("/api/admin/reminders/{id}/pause", s.handleAdminPauseReminder)
 		ar.Post("/api/admin/reminders/{id}/resume", s.handleAdminResumeReminder)
 		ar.Post("/api/admin/reminders/{id}/snooze", s.handleAdminSnoozeReminder)
+
+		ar.Get("/api/admin/telegram/users", s.handleAdminListTelegramUsers)
+		ar.Post("/api/admin/telegram/users/{id}/unlink", s.handleAdminUnlinkTelegram)
+		ar.Post("/api/admin/telegram/users/{id}/message", s.handleAdminMessageTelegram)
+		ar.Get("/api/admin/telegram/status", s.handleAdminTelegramStatus)
+		ar.Post("/api/admin/telegram/webhook", s.handleAdminRegisterTelegramWebhook)
+		ar.Delete("/api/admin/telegram/webhook", s.handleAdminDeleteTelegramWebhook)
 	})
 
 	staticFS, err := fs.Sub(staticFiles, "static")

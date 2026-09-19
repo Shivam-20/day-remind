@@ -120,51 +120,6 @@ func SendEmail(ctx context.Context, d DeliveryConfig, to, subject, body string) 
 	return nil
 }
 
-func SendTelegram(ctx context.Context, d DeliveryConfig, chatID, text string) error {
-	if !d.TelegramEnabled || d.TelegramBotToken == "" {
-		return fmt.Errorf("telegram delivery is not configured")
-	}
-	chatID = strings.TrimSpace(chatID)
-	if chatID == "" {
-		return fmt.Errorf("telegram chat id is required")
-	}
-	payload := map[string]any{
-		"chat_id": chatID,
-		"text":    text,
-	}
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", d.TelegramBotToken)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 15 * time.Second}
-	res, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
-	if res.StatusCode >= 300 {
-		return fmt.Errorf("telegram: %s", strings.TrimSpace(string(body)))
-	}
-	var out struct {
-		OK          bool   `json:"ok"`
-		Description string `json:"description"`
-	}
-	if err := json.Unmarshal(body, &out); err != nil || !out.OK {
-		if out.Description != "" {
-			return fmt.Errorf("telegram: %s", out.Description)
-		}
-		return fmt.Errorf("telegram send failed")
-	}
-	return nil
-}
-
 // SendWebPush delivers a browser push notification using VAPID keys from config.
 func SendWebPush(ctx context.Context, d DeliveryConfig, subscriptionJSON, title, body string) error {
 	if !d.WebPushEnabled {

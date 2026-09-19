@@ -2,6 +2,7 @@ window.DR_ADMIN_ROUTES = {
   '/admin': renderAdminDashboard,
   '/admin/users': renderAdminUsers,
   '/admin/reminders': renderAdminReminders,
+  '/admin/telegram': renderAdminTelegram,
   '/admin/settings': renderAdminDeliverySettings,
 };
 
@@ -9,7 +10,9 @@ const adminState = {
   stats: null,
   users: [],
   reminders: [],
+  telegramUsers: [],
   userQuery: '',
+  telegramQuery: '',
   reminderQuery: '',
   reminderStatus: 'all',
   reminderUserId: '',
@@ -20,6 +23,7 @@ function adminNavHTML(active) {
     ['/admin', 'Dashboard'],
     ['/admin/users', 'Users'],
     ['/admin/reminders', 'Reminders'],
+    ['/admin/telegram', 'Telegram'],
     ['/admin/settings', 'Delivery'],
   ];
   return `
@@ -111,6 +115,10 @@ async function renderAdminDashboard() {
         <a href="#/admin/reminders" class="card settings-card">
           <h3>Manage reminders</h3>
           <p>View and act on reminders across all users.</p>
+        </a>
+        <a href="#/admin/telegram" class="card settings-card">
+          <h3>Telegram bot</h3>
+          <p>See linked chat accounts, message or unlink them.</p>
         </a>
         <a href="#/admin/settings" class="card settings-card">
           <h3>Delivery settings</h3>
@@ -586,6 +594,154 @@ async function renderAdminDeliverySettings() {
     try {
       await API.post('/api/admin/settings/delivery/test', { channel: 'telegram', to });
       showToast('Test Telegram message sent');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+}
+
+async function loadAdminTelegramUsers(query = adminState.telegramQuery) {
+  const params = new URLSearchParams();
+  if (query) params.set('q', query);
+  params.set('limit', '200');
+  const data = await API.get('/api/admin/telegram/users?' + params.toString());
+  adminState.telegramUsers = data.users || [];
+  return adminState.telegramUsers;
+}
+
+async function renderAdminTelegram() {
+  let status;
+  try {
+    status = await API.get('/api/admin/telegram/status');
+    await loadAdminTelegramUsers();
+  } catch (err) {
+    showToast(err.message, 'error');
+    return;
+  }
+  const rows = adminState.telegramUsers.map((u) => `
+    <tr>
+      <td>
+        <div class="cell-primary">${escapeHTML(u.email)}</div>
+        <div class="cell-secondary">${escapeHTML(u.display_name || '—')}</div>
+      </td>
+      <td>${u.username ? '@' + escapeHTML(u.username) : escapeHTML(u.first_name || '—')}</td>
+      <td class="mono-cell">${escapeHTML(u.chat_id || '—')}</td>
+      <td>${u.enabled ? '<span class="badge">Enabled</span>' : '<span class="badge badge-paused">Disabled</span>'}</td>
+      <td class="mono-cell">${u.linked_at ? formatAdminDate(u.linked_at) : '—'}</td>
+      <td class="table-actions">
+        <button class="btn btn-sm" data-tg-message="${u.user_id}">Message</button>
+        <button class="btn btn-sm btn-danger" data-tg-unlink="${u.user_id}">Unlink</button>
+      </td>
+    </tr>
+  `).join('');
+
+  const webhook = status.webhook || {};
+  const webhookState = webhook.url ? escapeHTML(webhook.url) : 'not registered';
+  const isWebhookMode = String(status.mode) === 'webhook';
+  const main = `
+    <div class="admin-toolbar">
+      <div>
+        <h1 class="page-title">Telegram</h1>
+        <p class="page-sub">${adminState.telegramUsers.length} linked account(s)</p>
+      </div>
+    </div>
+    <div class="card alert-channel-card">
+      <h3>Bot status</h3>
+      <p class="channel-help">Update mode: <strong>${escapeHTML(status.mode || 'polling')}</strong> · Bot ${status.configured ? 'configured' : 'not configured'} · Webhook secret ${status.secret_set ? 'set' : 'not set'}</p>
+      <p class="channel-help">Webhook URL: <code>${webhookState}</code></p>
+      ${status.configured && isWebhookMode ? `
+      <div class="inline-actions">
+        <button class="btn btn-sm" id="tg-register">Register webhook</button>
+        <button class="btn btn-sm btn-danger" id="tg-delete">Delete webhook</button>
+      </div>` : ''}
+    </div>
+    <div class="admin-filters card">
+      <div class="field" style="margin:0">
+        <label for="tg-search">Search</label>
+        <input id="tg-search" type="search" value="${escapeHTML(adminState.telegramQuery)}" placeholder="Search email, name or username">
+      </div>
+    </div>
+    <div class="table-wrap card">
+      <table class="data-table">
+        <thead>
+          <tr><th>User</th><th>Telegram</th><th>Chat ID</th><th>Alerts</th><th>Linked</th><th>Actions</th></tr>
+        </thead>
+        <tbody>
+          ${rows || '<tr><td colspan="6" class="table-empty">No linked Telegram accounts</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `;
+  document.getElementById('app').innerHTML = adminShellHTML('/admin/telegram', main);
+  bindAdminShell();
+  bindAdminTelegramEvents();
+}
+
+function bindAdminTelegramEvents() {
+  const search = document.getElementById('tg-search');
+  let timer;
+  search?.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      adminState.telegramQuery = search.value.trim();
+      renderAdminTelegram();
+    }, 300);
+  });
+  document.querySelectorAll('[data-tg-message]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const user = adminState.telegramUsers.find((u) => u.user_id === btn.dataset.tgMessage);
+      if (user) openTelegramMessageDrawer(user);
+    });
+  });
+  document.querySelectorAll('[data-tg-unlink]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Unlink this Telegram account?')) return;
+      try {
+        await API.post(`/api/admin/telegram/users/${btn.dataset.tgUnlink}/unlink`);
+        showToast('Telegram account unlinked');
+        renderAdminTelegram();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  });
+  document.getElementById('tg-register')?.addEventListener('click', async () => {
+    try {
+      await API.post('/api/admin/telegram/webhook');
+      showToast('Webhook registered');
+      renderAdminTelegram();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+  document.getElementById('tg-delete')?.addEventListener('click', async () => {
+    try {
+      await API.delete('/api/admin/telegram/webhook');
+      showToast('Webhook deleted');
+      renderAdminTelegram();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+}
+
+function openTelegramMessageDrawer(user) {
+  const drawer = openDrawer('Message ' + (user.email || 'user'), `
+    <div class="field">
+      <label for="tg-text">Message</label>
+      <textarea id="tg-text" rows="4" placeholder="Type a message to send in Telegram"></textarea>
+    </div>
+  `, `<button class="btn" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" id="tg-send">Send</button>`);
+  drawer.querySelector('#tg-send').addEventListener('click', async () => {
+    const text = document.getElementById('tg-text').value.trim();
+    if (!text) {
+      showToast('Enter a message', 'error');
+      return;
+    }
+    try {
+      await API.post(`/api/admin/telegram/users/${user.user_id}/message`, { text });
+      closeDrawer();
+      showToast('Message sent');
     } catch (err) {
       showToast(err.message, 'error');
     }

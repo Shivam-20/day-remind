@@ -16,11 +16,11 @@ import (
 )
 
 type Scheduler struct {
-	db              *storage.DB
-	cfg             config.Config
-	interval        time.Duration
-	lastDigestHour  int
-	lastDigestDay   int
+	db             *storage.DB
+	cfg            config.Config
+	interval       time.Duration
+	lastDigestHour int
+	lastDigestDay  int
 }
 
 func New(db *storage.DB, cfg config.Config) *Scheduler {
@@ -282,7 +282,22 @@ func (s *Scheduler) sendDelivery(ctx context.Context, d storage.Delivery, item r
 	case storage.ChannelEmail:
 		err = notify.SendEmail(ctx, deliveryCfg, pref.Address, subject, body)
 	case storage.ChannelTelegram:
-		err = notify.SendTelegram(ctx, deliveryCfg, pref.Address, text)
+		var tb strings.Builder
+		tb.WriteString(strings.TrimSpace(prefix))
+		tb.WriteString(" <b>")
+		tb.WriteString(notify.EscapeTelegramHTML(item.Title))
+		tb.WriteString("</b>")
+		if desc := strings.TrimSpace(item.Description); desc != "" {
+			tb.WriteString("\n")
+			tb.WriteString(notify.EscapeTelegramHTML(desc))
+		}
+		tb.WriteString("\nDue: ")
+		tb.WriteString(item.DueAt.UTC().Format(time.RFC822))
+		deepLink := ""
+		if base := strings.TrimRight(strings.TrimSpace(s.cfg.WebhookBaseURL), "/"); base != "" {
+			deepLink = base + "/#/reminders?open=" + item.ID.String()
+		}
+		err = notify.SendTelegramMessage(ctx, deliveryCfg, pref.Address, tb.String(), notify.TelegramReminderKeyboard(item.ID.String(), deepLink))
 	case storage.ChannelWebPush:
 		err = notify.SendWebPush(ctx, deliveryCfg, pref.Address, subject, text)
 	case storage.ChannelSMS:

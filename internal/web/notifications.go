@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/shivam-20/day-remind/internal/notify"
@@ -13,18 +14,22 @@ type channelPrefRequest struct {
 }
 
 type updateChannelsRequest struct {
-	Email       *channelPrefRequest `json:"email"`
-	Telegram    *channelPrefRequest `json:"telegram"`
-	QuietStart  *string             `json:"quiet_start"`
-	QuietEnd    *string             `json:"quiet_end"`
+	Email      *channelPrefRequest `json:"email"`
+	Telegram   *channelPrefRequest `json:"telegram"`
+	QuietStart *string             `json:"quiet_start"`
+	QuietEnd   *string             `json:"quiet_end"`
 }
 
-func (s *Server) effectiveDelivery(r *http.Request) (notify.DeliveryConfig, error) {
-	stored, err := s.db.GetDeliverySettings(r.Context())
+func (s *Server) deliveryConfig(ctx context.Context) (notify.DeliveryConfig, error) {
+	stored, err := s.db.GetDeliverySettings(ctx)
 	if err != nil {
 		return notify.DeliveryConfig{}, err
 	}
 	return notify.EffectiveDelivery(s.cfg, stored), nil
+}
+
+func (s *Server) effectiveDelivery(r *http.Request) (notify.DeliveryConfig, error) {
+	return s.deliveryConfig(r.Context())
 }
 
 func (s *Server) handleGetNotificationChannels(w http.ResponseWriter, r *http.Request) {

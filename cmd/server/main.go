@@ -35,6 +35,7 @@ func main() {
 	go runMorningDigests(ctx, db, cfg)
 
 	srv := web.New(cfg, db)
+	go srv.RunTelegram(ctx)
 	go func() {
 		if err := srv.ListenAndServe(); err != nil {
 			log.Println(err)
