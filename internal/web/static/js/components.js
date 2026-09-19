@@ -26,11 +26,18 @@ function openDrawer(title, bodyHTML, footerHTML) {
   `;
   document.body.appendChild(backdrop);
   document.body.appendChild(drawer);
-  drawer.querySelector('[data-close-drawer]').addEventListener('click', closeDrawer);
+  drawer.querySelectorAll('[data-close-drawer]').forEach((el) => el.addEventListener('click', closeDrawer));
+  document.addEventListener('keydown', drawerEscHandler);
+  drawer.querySelector('input, textarea, select, button')?.focus();
   return drawer;
 }
 
+function drawerEscHandler(e) {
+  if (e.key === 'Escape') closeDrawer();
+}
+
 function closeDrawer() {
+  document.removeEventListener('keydown', drawerEscHandler);
   document.querySelectorAll('.drawer-backdrop, .drawer').forEach((el) => el.remove());
 }
 
@@ -38,12 +45,33 @@ function emptyState(title, body, ctaHTML = '') {
   return `<div class="empty-state"><h3>${title}</h3><p>${body}</p>${ctaHTML}</div>`;
 }
 
+function safeTimeZone(tz) {
+  if (!tz) return null;
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone: tz });
+    return tz;
+  } catch {
+    return null;
+  }
+}
+
+function dayKey(date, tz) {
+  const opts = { year: 'numeric', month: '2-digit', day: '2-digit' };
+  if (tz) opts.timeZone = tz;
+  return new Intl.DateTimeFormat('en-CA', opts).format(date);
+}
+
 function formatDue(dueISO, tz) {
   const d = new Date(dueISO);
   const now = new Date();
+  const zone = safeTimeZone(tz);
   const opts = { hour: '2-digit', minute: '2-digit' };
-  const sameDay = d.toDateString() === now.toDateString();
-  if (sameDay) return d.toLocaleTimeString(undefined, opts);
+  if (zone) {
+    opts.timeZone = zone;
+    // A bare clock time is misleading when it is not the viewer's own zone.
+    if (zone !== Intl.DateTimeFormat().resolvedOptions().timeZone) opts.timeZoneName = 'short';
+  }
+  if (dayKey(d, zone) === dayKey(now, zone)) return d.toLocaleTimeString(undefined, opts);
   return d.toLocaleString(undefined, { month: 'short', day: 'numeric', ...opts });
 }
 
@@ -65,7 +93,7 @@ function reminderCardHTML(item, actionsHTML) {
     <article class="reminder-card${paused}" data-id="${item.id}">
       <div class="reminder-stripe"></div>
       <div>
-        <div class="reminder-time">${formatDue(item.due_at)} ${statusBadge(item)}</div>
+        <div class="reminder-time">${formatDue(item.due_at, item.timezone)} ${statusBadge(item)}</div>
         <div class="reminder-title">${escapeHTML(item.title)}</div>
         <div class="reminder-meta">${escapeHTML(item.priority)} · ${escapeHTML(item.status)}</div>
       </div>
@@ -75,7 +103,12 @@ function reminderCardHTML(item, actionsHTML) {
 }
 
 function escapeHTML(s) {
-  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function initTheme() {

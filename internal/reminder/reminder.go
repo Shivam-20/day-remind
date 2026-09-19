@@ -33,8 +33,12 @@ type Reminder struct {
 	PausedAt     *time.Time
 	ResumeAt     *time.Time
 	CompletedAt  *time.Time
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// SentDueAt and SentAdvanceAt record which notifications have already been
+	// dispatched, so a reminder is never delivered twice for the same event.
+	SentDueAt     *time.Time
+	SentAdvanceAt *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type CreateInput struct {
@@ -63,4 +67,22 @@ type ListFilter struct {
 	To     *time.Time
 	Query  string
 	Limit  int
+}
+
+// ValidStatus reports whether s is one of the four reminder states.
+func ValidStatus(s string) bool {
+	switch s {
+	case StatusScheduled, StatusPaused, StatusDone, StatusCancelled:
+		return true
+	}
+	return false
+}
+
+// ValidPriority reports whether p is one of the four priority levels.
+func ValidPriority(p string) bool {
+	switch p {
+	case PriorityLow, PriorityNormal, PriorityHigh, PriorityUrgent:
+		return true
+	}
+	return false
 }

@@ -14,5 +14,14 @@ services:
       timeout: 5s
       retries: 5
 
+  # Local SMTP catcher for development: nothing leaves the machine.
+  # Web UI on http://localhost:8025, SMTP on :1025.
+  # Use SMTP_HOST=localhost SMTP_PORT=1025 SMTP_TLS=none SMTP_FROM=dev@day-remind.local
+  mailhog:
+    image: mailhog/mailhog:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
 volumes:
   day_remind_mongo:

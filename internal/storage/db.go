@@ -12,7 +12,10 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
 
-const defaultDatabase = "day_remind"
+const (
+	defaultDatabase = "day_remind"
+	defaultTimezone = "Asia/Kolkata"
+)
 
 type DB struct {
 	client *mongo.Client
