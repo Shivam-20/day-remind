@@ -177,21 +177,19 @@ Browser (hash SPA)  →  internal/web  →  internal/storage  →  MongoDB
 
 Do **not** import `storage` from `reminder`. Web imports both.
 
-### Telegram Gateway integration (optional)
+### Telegram Gateway (production)
 
-When `TELEGRAM_GATEWAY_URL` is set, day-remind routes all Telegram traffic through
-the `telegram-gateway` service instead of calling `api.telegram.org` directly:
+Production uses **telegram-gateway** on a1-watcher (`http://161.118.181.5/tg`). Setting
+`TELEGRAM_GATEWAY_URL` + `TELEGRAM_GATEWAY_API_TOKEN` makes day-remind stop calling
+`getUpdates` / `setWebhook` and route all Telegram traffic through the gateway:
 
-- **Outbound:** `callTelegram` routes via the gateway's `/v1/telegram/{method}` passthrough.
-- **Inbound:** day-remind polls `/v1/inbound/updates` (default) or accepts webhook pushes
-  from the gateway (`TELEGRAM_GATEWAY_INBOUND_MODE=poll|webhook|both`).
-- **Transport:** When gateway is configured, day-remind does NOT call `setWebhook` /
-  `deleteWebhook` — the gateway manages the Telegram connection. Use the gateway admin UI
-  to register/manage webhooks.
+- **Outbound:** `callTelegram` via `/v1/telegram/{method}`.
+- **Inbound:** pull `/v1/inbound/updates` + ack (`TELEGRAM_GATEWAY_INBOUND_MODE=poll`).
+- **Transport:** gateway service id `day-remind` is `update_mode: polling`. Do not start
+  a second poller on this bot token.
 
-The gateway and day-remind both join the shared `apps-net` Docker network. Configure
-the gateway with the bot token and `inbound_url` pointing back to
-`http://day-remind-app:8090/api/webhooks/telegram` for webhook mode.
+The gateway host cannot reach `day-remind-app` Docker DNS, so inbound is **poll**, not
+a Deliver URL webhook. Rollback: `../telegram-gateway/scripts/safe-rollout-day-remind-rollback.sh`.
 
 ---
 
@@ -271,7 +269,7 @@ docs/plans/                 # Implementation roadmap
 | `TELEGRAM_BOT_TOKEN` | no | Telegram bot token (admin can also set in DB) |
 | `TELEGRAM_UPDATE_MODE` | no | `polling` (default, no public URL needed) \| `webhook` \| `off`. Webhook mode requires an `https` `WEBHOOK_BASE_URL`. Ignored for transport when `TELEGRAM_GATEWAY_URL` is set |
 | `TELEGRAM_WEBHOOK_SECRET` | no | Optional `secret_token` for webhook mode; incoming updates rejected on mismatch |
-| `TELEGRAM_GATEWAY_URL` | no | Telegram-gateway base URL (e.g. `http://telegram-gateway:8091`). When set, day-remind routes all Telegram traffic through the gateway |
+| `TELEGRAM_GATEWAY_URL` | no | Telegram-gateway base URL (prod `http://161.118.181.5/tg`). When set, day-remind routes all Telegram traffic through the gateway |
 | `TELEGRAM_GATEWAY_API_TOKEN` | no | Bearer API token (`tgw_…`) issued by the gateway for the day-remind service |
 | `TELEGRAM_GATEWAY_INBOUND_MODE` | no | How day-remind receives updates from the gateway: `poll` (default) \| `webhook` \| `both` |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URL` | no | Google OAuth for Calendar/Gmail sync |

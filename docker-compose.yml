@@ -29,12 +29,9 @@ services:
     environment:
       # container reaches mongo by service name (overrides localhost .env value)
       DATABASE_URL: mongodb://dayremind:dayremind@mongo:27017/day_remind?authSource=admin
-      # Telegram Gateway: when TELEGRAM_GATEWAY_URL is set, day-remind routes all
-      # Telegram traffic through the gateway (which holds the bot token).
-      # The gateway container must already be running on apps-net
-      # (see ../telegram-gateway/docker-compose.yml). Both services resolve each
-      # other by Docker DNS name on the shared apps-net network.
-      # TELEGRAM_GATEWAY_URL: http://telegram-gateway:8091
+      # Telegram Gateway lives on a1-watcher, not this compose file.
+      # Set TELEGRAM_GATEWAY_URL=http://161.118.181.5/tg in .env (not Docker DNS).
+      # TELEGRAM_GATEWAY_URL: http://161.118.181.5/tg
       # TELEGRAM_GATEWAY_API_TOKEN: tgw_...
       # TELEGRAM_GATEWAY_INBOUND_MODE: poll
     networks:
