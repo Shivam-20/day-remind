@@ -14,10 +14,25 @@ import (
 	"github.com/shivam-20/day-remind/internal/storage"
 )
 
+// Email provider selection: "resend" (HTTP API) or "smtp" (admin-configured SMTP server).
+const (
+	EmailProviderResend = "resend"
+	EmailProviderSMTP   = "smtp"
+)
+
 type DeliveryConfig struct {
-	EmailEnabled     bool
-	EmailFrom        string
-	ResendAPIKey     string
+	EmailEnabled  bool
+	EmailFrom     string
+	EmailProvider string
+	ResendAPIKey  string
+	// SMTP settings — alternative email transport for reminder alerts,
+	// password resets, and email verification.
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUsername string
+	SMTPPassword string
+	SMTPTLSMode  string
+
 	TelegramEnabled  bool
 	TelegramBotToken string
 	WebPushEnabled   bool
@@ -28,34 +43,94 @@ type DeliveryConfig struct {
 	TwilioAuthToken  string
 	TwilioFrom       string
 	SlackEnabled     bool
+
+	TelegramGatewayURL         string
+	TelegramGatewayAPIToken    string
+	TelegramGatewayInboundMode string
+}
+
+func defaultSMTPPort(port int) int {
+	if port <= 0 || port > 65535 {
+		return 587
+	}
+	return port
+}
+
+// EmailProviderReady reports whether the selected provider has what it needs.
+func EmailProviderReady(d DeliveryConfig) bool {
+	if d.EmailFrom == "" {
+		return false
+	}
+	if d.EmailProvider == EmailProviderSMTP {
+		return d.SMTPHost != ""
+	}
+	return d.ResendAPIKey != ""
 }
 
 func EffectiveDelivery(cfg config.Config, stored storage.DeliverySettings) DeliveryConfig {
 	emailFrom := firstNonEmpty(stored.EmailFrom, cfg.EmailFrom)
 	resendKey := firstNonEmpty(stored.ResendAPIKey, cfg.ResendAPIKey)
 	tgToken := firstNonEmpty(stored.TelegramBotToken, cfg.TelegramBotToken)
+	gatewayURL := firstNonEmpty(stored.TelegramGatewayURL, cfg.TelegramGatewayURL)
+	gatewayToken := firstNonEmpty(stored.TelegramGatewayAPIToken, cfg.TelegramGatewayAPIToken)
+	gatewayInboundMode := strings.TrimSpace(stored.TelegramGatewayInboundMode)
+	if gatewayInboundMode == "" {
+		gatewayInboundMode = cfg.TelegramGatewayInboundMode
+	}
+	if gatewayInboundMode == "" {
+		gatewayInboundMode = "poll"
+	}
 	vapidPublic := strings.TrimSpace(cfg.VAPIDPublic)
 	vapidPrivate := strings.TrimSpace(cfg.VAPIDPrivate)
 	twilioSID := strings.TrimSpace(cfg.TwilioAccountSID)
 	twilioToken := strings.TrimSpace(cfg.TwilioAuthToken)
 	twilioFrom := strings.TrimSpace(cfg.TwilioFrom)
 
+	smtpHost := firstNonEmpty(stored.SMTPHost, cfg.SMTPHost)
+	smtpPort := stored.SMTPPort
+	if smtpPort == 0 {
+		smtpPort = cfg.SMTPPort
+	}
+	smtpUsername := firstNonEmpty(stored.SMTPUsername, cfg.SMTPUsername)
+	smtpPassword := firstNonEmpty(stored.SMTPPassword, cfg.SMTPPassword)
+	smtpTLSMode := firstNonEmpty(stored.SMTPTLSMode, cfg.SMTPTLSMode)
+
+	provider := strings.ToLower(strings.TrimSpace(stored.EmailProvider))
+	switch provider {
+	case EmailProviderSMTP, EmailProviderResend:
+	default:
+		// No explicit choice: prefer SMTP when only it is configured,
+		// otherwise Resend (which may also be empty).
+		if smtpHost != "" && resendKey == "" {
+			provider = EmailProviderSMTP
+		} else {
+			provider = EmailProviderResend
+		}
+	}
+
 	hasStored := !stored.UpdatedAt.IsZero()
 	emailEnabled := stored.EmailEnabled
-	if !hasStored && resendKey != "" && emailFrom != "" {
+	if !hasStored && ((provider == EmailProviderSMTP && smtpHost != "") || (provider == EmailProviderResend && resendKey != "")) && emailFrom != "" {
 		emailEnabled = true
 	}
 	tgEnabled := stored.TelegramEnabled
-	if !hasStored && tgToken != "" {
+	if !hasStored && (tgToken != "" || (gatewayURL != "" && gatewayToken != "")) {
 		tgEnabled = true
 	}
 	webPushEnabled := vapidPublic != "" && vapidPrivate != ""
 	smsEnabled := twilioSID != "" && twilioToken != "" && twilioFrom != ""
 
 	return DeliveryConfig{
-		EmailEnabled:     emailEnabled,
-		EmailFrom:        emailFrom,
-		ResendAPIKey:     resendKey,
+		EmailEnabled:  emailEnabled,
+		EmailFrom:     emailFrom,
+		EmailProvider: provider,
+		ResendAPIKey:  resendKey,
+		SMTPHost:      smtpHost,
+		SMTPPort:      defaultSMTPPort(smtpPort),
+		SMTPUsername:  smtpUsername,
+		SMTPPassword:  smtpPassword,
+		SMTPTLSMode:   smtpTLSMode,
+
 		TelegramEnabled:  tgEnabled,
 		TelegramBotToken: tgToken,
 		WebPushEnabled:   webPushEnabled,
@@ -66,12 +141,16 @@ func EffectiveDelivery(cfg config.Config, stored storage.DeliverySettings) Deliv
 		TwilioAuthToken:  twilioToken,
 		TwilioFrom:       twilioFrom,
 		SlackEnabled:     true,
+
+		TelegramGatewayURL:         gatewayURL,
+		TelegramGatewayAPIToken:    gatewayToken,
+		TelegramGatewayInboundMode: gatewayInboundMode,
 	}
 }
 
 func ChannelAvailability(d DeliveryConfig) map[string]bool {
-	emailReady := d.ResendAPIKey != "" && d.EmailFrom != ""
-	tgReady := d.TelegramBotToken != ""
+	emailReady := EmailProviderReady(d)
+	tgReady := (d.TelegramBotToken != "") || (d.TelegramGatewayURL != "" && d.TelegramGatewayAPIToken != "")
 	webPushReady := d.VAPIDPublic != "" && d.VAPIDPrivate != ""
 	smsReady := d.TwilioAccountSID != "" && d.TwilioAuthToken != "" && d.TwilioFrom != ""
 	return map[string]bool{
@@ -84,10 +163,23 @@ func ChannelAvailability(d DeliveryConfig) map[string]bool {
 }
 
 func SendEmail(ctx context.Context, d DeliveryConfig, to, subject, body string) error {
-	if !d.EmailEnabled || d.ResendAPIKey == "" || d.EmailFrom == "" {
+	if !d.EmailEnabled || !EmailProviderReady(d) {
 		return fmt.Errorf("email delivery is not configured")
 	}
 	to = strings.TrimSpace(strings.ToLower(to))
+	if to == "" {
+		return fmt.Errorf("recipient email is required")
+	}
+	if d.EmailProvider == EmailProviderSMTP {
+		return deliverSMTP(ctx, d.SMTPHost, d.SMTPPort, d.SMTPUsername, d.SMTPPassword, d.SMTPTLSMode, d.EmailFrom, to, subject, body)
+	}
+	return sendResendEmail(ctx, d, to, subject, body)
+}
+
+func sendResendEmail(ctx context.Context, d DeliveryConfig, to, subject, body string) error {
+	if d.ResendAPIKey == "" || d.EmailFrom == "" {
+		return fmt.Errorf("email delivery is not configured")
+	}
 	if to == "" {
 		return fmt.Errorf("recipient email is required")
 	}

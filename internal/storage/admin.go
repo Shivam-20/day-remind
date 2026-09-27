@@ -118,12 +118,17 @@ func (db *DB) UpdateUserAdmin(ctx context.Context, id uuid.UUID, in AdminUserUpd
 		return User{}, err
 	}
 	set := bson.M{"updated_at": time.Now().UTC()}
+	unset := bson.M{}
 	if in.Email != nil {
 		email := strings.TrimSpace(strings.ToLower(*in.Email))
 		if email == "" {
 			return User{}, fmt.Errorf("email is required")
 		}
 		set["email"] = email
+		// A changed address must be verified again.
+		if email != current.Email {
+			unset["email_verified_at"] = ""
+		}
 	}
 	if in.DisplayName != nil {
 		set["display_name"] = strings.TrimSpace(*in.DisplayName)
@@ -136,6 +141,13 @@ func (db *DB) UpdateUserAdmin(ctx context.Context, id uuid.UUID, in AdminUserUpd
 	}
 	if in.IsAdmin != nil {
 		set["is_admin"] = *in.IsAdmin
+	}
+	if in.EmailVerified != nil {
+		if *in.EmailVerified {
+			set["email_verified_at"] = time.Now().UTC()
+		} else {
+			unset["email_verified_at"] = ""
+		}
 	}
 	if in.NotificationsPaused != nil {
 		set["notifications_paused"] = *in.NotificationsPaused
@@ -152,7 +164,11 @@ func (db *DB) UpdateUserAdmin(ctx context.Context, id uuid.UUID, in AdminUserUpd
 		set["is_admin"] = true
 	}
 
-	res, err := db.collection("users").UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": set})
+	update := bson.M{"$set": set}
+	if len(unset) > 0 {
+		update["$unset"] = unset
+	}
+	res, err := db.collection("users").UpdateOne(ctx, bson.M{"_id": id}, update)
 	if err != nil {
 		if mongo.IsDuplicateKeyError(err) {
 			return User{}, ErrConflict

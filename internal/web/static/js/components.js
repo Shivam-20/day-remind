@@ -26,7 +26,9 @@ function openDrawer(title, bodyHTML, footerHTML) {
   `;
   document.body.appendChild(backdrop);
   document.body.appendChild(drawer);
-  drawer.querySelector('[data-close-drawer]').addEventListener('click', closeDrawer);
+  drawer.querySelectorAll('[data-close-drawer]').forEach((btn) => {
+    btn.addEventListener('click', closeDrawer);
+  });
   return drawer;
 }
 
@@ -76,6 +78,10 @@ function reminderCardHTML(item, actionsHTML) {
 
 function escapeHTML(s) {
   return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function escapeAttr(s) {
+  return escapeHTML(s).replace(/"/g, '&quot;');
 }
 
 function initTheme() {

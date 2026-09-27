@@ -11,11 +11,11 @@ import (
 )
 
 type DashboardStats struct {
-	Overdue     int64
-	Today       int64
-	Upcoming7d  int64
-	DoneCount   int64
-	NextFive    []reminder.Reminder
+	Overdue    int64
+	Today      int64
+	Upcoming7d int64
+	DoneCount  int64
+	NextFive   []reminder.Reminder
 }
 
 func (db *DB) GetDashboardStats(ctx context.Context, userID uuid.UUID) (DashboardStats, error) {

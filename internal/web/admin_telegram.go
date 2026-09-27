@@ -94,7 +94,7 @@ func (s *Server) handleAdminMessageTelegram(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	delivery, err := s.deliveryConfig(r.Context())
-	if err != nil || delivery.TelegramBotToken == "" {
+	if err != nil || (!notify.IsGateway(delivery) && delivery.TelegramBotToken == "") {
 		writeError(w, http.StatusServiceUnavailable, "telegram is not configured")
 		return
 	}
@@ -107,11 +107,24 @@ func (s *Server) handleAdminMessageTelegram(w http.ResponseWriter, r *http.Reque
 
 func (s *Server) handleAdminTelegramStatus(w http.ResponseWriter, r *http.Request) {
 	delivery, _ := s.deliveryConfig(r.Context())
+	usesGateway := delivery.TelegramGatewayURL != "" && delivery.TelegramGatewayAPIToken != ""
 	out := map[string]any{
-		"mode":        s.cfg.TelegramUpdateMode,
-		"configured":  delivery.TelegramBotToken != "",
-		"secret_set":  s.cfg.TelegramWebhookSecret != "",
-		"webhook_url": s.telegramWebhookURL(),
+		"mode":         s.cfg.TelegramUpdateMode,
+		"configured":   delivery.TelegramBotToken != "",
+		"secret_set":   s.cfg.TelegramWebhookSecret != "",
+		"webhook_url":  s.telegramWebhookURL(),
+		"uses_gateway": usesGateway,
+	}
+	if usesGateway {
+		out["gateway_url"] = delivery.TelegramGatewayURL
+		out["gateway_inbound_mode"] = delivery.TelegramGatewayInboundMode
+		// Query the gateway's /v1/status for the app's transport state.
+		if raw, err := notify.CallGatewayStatus(r.Context(), delivery); err == nil {
+			out["gateway_status"] = raw
+		} else {
+			out["gateway_status_error"] = err.Error()
+		}
+		return
 	}
 	if delivery.TelegramBotToken != "" {
 		if info, err := notify.GetTelegramWebhookInfo(r.Context(), delivery); err == nil {
@@ -125,8 +138,15 @@ func (s *Server) handleAdminTelegramStatus(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) handleAdminRegisterTelegramWebhook(w http.ResponseWriter, r *http.Request) {
 	delivery, err := s.deliveryConfig(r.Context())
-	if err != nil || delivery.TelegramBotToken == "" {
+	if err != nil || (!notify.IsGateway(delivery) && delivery.TelegramBotToken == "") {
 		writeError(w, http.StatusServiceUnavailable, "telegram is not configured")
+		return
+	}
+	if notify.IsGateway(delivery) {
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status":  "gateway-managed",
+			"message": "Webhook transport is managed by telegram-gateway. Use its admin UI sync-transport endpoint.",
+		})
 		return
 	}
 	url := s.telegramWebhookURL()
@@ -143,8 +163,15 @@ func (s *Server) handleAdminRegisterTelegramWebhook(w http.ResponseWriter, r *ht
 
 func (s *Server) handleAdminDeleteTelegramWebhook(w http.ResponseWriter, r *http.Request) {
 	delivery, err := s.deliveryConfig(r.Context())
-	if err != nil || delivery.TelegramBotToken == "" {
+	if err != nil || (!notify.IsGateway(delivery) && delivery.TelegramBotToken == "") {
 		writeError(w, http.StatusServiceUnavailable, "telegram is not configured")
+		return
+	}
+	if notify.IsGateway(delivery) {
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status":  "gateway-managed",
+			"message": "Webhook transport is managed by telegram-gateway. Use its admin UI sync-transport endpoint.",
+		})
 		return
 	}
 	if err := notify.DeleteTelegramWebhook(r.Context(), delivery); err != nil {

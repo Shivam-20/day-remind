@@ -39,25 +39,50 @@ func (s *Server) handleTelegramLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stored, _ := s.db.GetDeliverySettings(r.Context())
+	botHint := stored.TelegramBotUsername
+	if botHint == "" {
+		delivery, derr := s.deliveryConfig(r.Context())
+		if derr == nil && notify.IsGateway(delivery) {
+			if raw, err := notify.GatewayMe(r.Context(), delivery); err == nil {
+				var info struct {
+					Result struct {
+						Username string `json:"username"`
+					} `json:"result"`
+				}
+				if json.Unmarshal(raw, &info) == nil {
+					botHint = info.Result.Username
+				}
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token":      link.Token,
 		"expires_at": link.ExpiresAt.UTC().Format(time.RFC3339),
 		"command":    "/start " + link.Token,
-		"bot_hint":   stored.TelegramBotUsername,
+		"bot_hint":   botHint,
 	})
 }
 
 func (s *Server) handleTelegramWebhook(w http.ResponseWriter, r *http.Request) {
-	if secret := strings.TrimSpace(s.cfg.TelegramWebhookSecret); secret != "" {
-		if r.Header.Get("X-Telegram-Bot-Api-Secret-Token") != secret {
-			writeError(w, http.StatusUnauthorized, "invalid secret")
-			return
-		}
-	}
 	delivery, err := s.deliveryConfig(r.Context())
-	if err != nil || delivery.TelegramBotToken == "" {
+	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "telegram not configured")
 		return
+	}
+	// When using the gateway, inbound updates arrive as gateway webhook pushes.
+	// The gateway forwards X-Telegram-Bot-Api-Secret-Token (if configured) so the
+	// existing secret check still applies.
+	if !notify.IsGateway(delivery) {
+		if secret := strings.TrimSpace(s.cfg.TelegramWebhookSecret); secret != "" {
+			if r.Header.Get("X-Telegram-Bot-Api-Secret-Token") != secret {
+				writeError(w, http.StatusUnauthorized, "invalid secret")
+				return
+			}
+		}
+		if delivery.TelegramBotToken == "" {
+			writeError(w, http.StatusServiceUnavailable, "telegram not configured")
+			return
+		}
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
@@ -79,6 +104,22 @@ func (s *Server) handleTelegramWebhook(w http.ResponseWriter, r *http.Request) {
 
 // RunTelegram starts the configured Telegram transport (polling or webhook).
 func (s *Server) RunTelegram(ctx context.Context) {
+	delivery, err := s.deliveryConfig(ctx)
+	if err != nil || (!notify.IsGateway(delivery) && delivery.TelegramBotToken == "") {
+		log.Printf("telegram: not configured")
+		return
+	}
+	if notify.IsGateway(delivery) {
+		// Gateway manages the Telegram connection. We only need to receive
+		// updates: either poll the gateway's inbound queue or accept webhook
+		// pushes (the latter needs no extra goroutine).
+		mode := strings.TrimSpace(delivery.TelegramGatewayInboundMode)
+		if mode == "poll" || mode == "both" {
+			go s.runGatewayPolling(ctx)
+		}
+		log.Printf("telegram: gateway mode (inbound=%s)", mode)
+		return
+	}
 	switch s.cfg.TelegramUpdateMode {
 	case "off":
 		return
@@ -86,6 +127,49 @@ func (s *Server) RunTelegram(ctx context.Context) {
 		s.bootstrapTelegramWebhook(ctx)
 	default:
 		s.runTelegramPolling(ctx)
+	}
+}
+
+// runGatewayPolling pulls updates from the telegram-gateway /v1/inbound/updates
+// endpoint and acknowledges them after processing.
+func (s *Server) runGatewayPolling(ctx context.Context) {
+	log.Printf("telegram: gateway polling started")
+	var lastAckedID int64
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		delivery, err := s.deliveryConfig(ctx)
+		if err != nil || !notify.IsGateway(delivery) {
+			if !sleepCtx(ctx, 15*time.Second) {
+				return
+			}
+			continue
+		}
+		updates, ids, err := notify.GetGatewayInboundUpdates(ctx, delivery, lastAckedID, 50)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			log.Printf("telegram gateway poll: %v", err)
+			if !sleepCtx(ctx, 5*time.Second) {
+				return
+			}
+			continue
+		}
+		for _, update := range updates {
+			uctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			s.handleTelegramUpdate(uctx, delivery, update)
+			cancel()
+		}
+		if len(ids) > 0 {
+			if err := notify.AckGatewayInbound(ctx, delivery, ids); err != nil {
+				log.Printf("telegram gateway ack: %v", err)
+			}
+			lastAckedID = ids[len(ids)-1]
+		} else if !sleepCtx(ctx, 2*time.Second) {
+			return
+		}
 	}
 }
 

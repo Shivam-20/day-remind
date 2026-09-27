@@ -1,7 +1,9 @@
 package web
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -17,16 +19,17 @@ type offsetInput struct {
 }
 
 type createReminderRequest struct {
-	Title              string            `json:"title"`
-	Description        string            `json:"description"`
-	DueAt              string            `json:"due_at"`
-	Timezone           string            `json:"timezone"`
-	Priority           string            `json:"priority"`
-	ListID             *string           `json:"list_id"`
-	TagIDs             []string          `json:"tag_ids"`
-	RecurrenceRule     string            `json:"recurrence_rule"`
-	ChannelOverrides   map[string]bool   `json:"channel_overrides"`
-	Offsets            []offsetInput     `json:"offsets"`
+	Title            string          `json:"title"`
+	Description      string          `json:"description"`
+	DueAt            string          `json:"due_at"`
+	Timezone         string          `json:"timezone"`
+	Priority         string          `json:"priority"`
+	ListID           *string         `json:"list_id"`
+	MailWordingID    *string         `json:"mail_wording_id"`
+	TagIDs           []string        `json:"tag_ids"`
+	RecurrenceRule   string          `json:"recurrence_rule"`
+	ChannelOverrides map[string]bool `json:"channel_overrides"`
+	Offsets          []offsetInput   `json:"offsets"`
 }
 
 type snoozeRequest struct {
@@ -113,6 +116,12 @@ func (s *Server) handleCreateReminder(w http.ResponseWriter, r *http.Request) {
 		}
 		in.ListID = &id
 	}
+	wordingID, err := s.ownedMailWordingID(r, userID, body.MailWordingID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	in.MailWordingID = wordingID
 	item, err := s.db.CreateReminder(r.Context(), userID, in)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -184,6 +193,18 @@ func (s *Server) handleUpdateReminder(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ChannelOverrides != nil {
 		in.ChannelOverrides = &body.ChannelOverrides
+	}
+	if body.MailWordingID != nil {
+		if strings.TrimSpace(*body.MailWordingID) == "" {
+			in.ClearMailWording = true
+		} else {
+			wordingID, err := s.ownedMailWordingID(r, userID, body.MailWordingID)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			in.MailWordingID = wordingID
+		}
 	}
 	item, err := s.db.UpdateReminder(r.Context(), userID, id, in)
 	if err == storage.ErrNotFound {
@@ -350,6 +371,22 @@ func (s *Server) handleSnoozePresets(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"presets": reminder.SnoozePresets()})
 }
 
+func (s *Server) ownedMailWordingID(r *http.Request, userID uuid.UUID, raw *string) (*uuid.UUID, error) {
+	if raw == nil || strings.TrimSpace(*raw) == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(strings.TrimSpace(*raw))
+	if err != nil {
+		return nil, fmt.Errorf("invalid mail_wording_id")
+	}
+	if _, err := s.db.MailWordingByID(r.Context(), userID, id); err == storage.ErrNotFound {
+		return nil, fmt.Errorf("unknown message template")
+	} else if err != nil {
+		return nil, fmt.Errorf("could not load message template")
+	}
+	return &id, nil
+}
+
 func (s *Server) applyReminderOffsets(r *http.Request, userID, reminderID uuid.UUID, offsets []offsetInput) error {
 	for _, off := range offsets {
 		if _, err := s.db.CreateOffset(r.Context(), userID, reminderID, storage.OffsetCreateInput{
@@ -401,6 +438,9 @@ func reminderPayload(r reminder.Reminder) map[string]any {
 	}
 	if r.ListID != nil {
 		out["list_id"] = r.ListID.String()
+	}
+	if r.MailWordingID != nil {
+		out["mail_wording_id"] = r.MailWordingID.String()
 	}
 	if r.SeriesID != nil {
 		out["series_id"] = r.SeriesID.String()

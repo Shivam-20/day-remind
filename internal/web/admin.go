@@ -27,6 +27,7 @@ type adminUpdateUserRequest struct {
 	Timezone            *string    `json:"timezone"`
 	Locale              *string    `json:"locale"`
 	IsAdmin             *bool      `json:"is_admin"`
+	EmailVerified       *bool      `json:"email_verified"`
 	NotificationsPaused *bool      `json:"notifications_paused"`
 	PausedUntil         *time.Time `json:"notifications_paused_until"`
 }
@@ -130,6 +131,7 @@ func (s *Server) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		Timezone:                 body.Timezone,
 		Locale:                   body.Locale,
 		IsAdmin:                  body.IsAdmin,
+		EmailVerified:            body.EmailVerified,
 		NotificationsPaused:      body.NotificationsPaused,
 		NotificationsPausedUntil: body.PausedUntil,
 	}

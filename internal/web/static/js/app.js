@@ -18,9 +18,13 @@ document.addEventListener('DOMContentLoaded', boot);
 
 async function boot() {
   const hash = location.hash.replace('#', '') || '/today';
-  if (hash === '/login' || hash === '/signup' || hash.startsWith('/reset-password')) {
+  if (hash === '/login' || hash === '/signup' || hash.startsWith('/reset-password') || hash.startsWith('/verify-email')) {
     if (hash.startsWith('/reset-password')) {
       renderResetPassword(new URLSearchParams(location.hash.split('?')[1] || '').get('token') || new URLSearchParams(location.search).get('token'));
+      return;
+    }
+    if (hash.startsWith('/verify-email')) {
+      renderVerifyEmail(new URLSearchParams(location.hash.split('?')[1] || '').get('token'));
       return;
     }
     renderAuth(hash === '/signup');
@@ -43,6 +47,10 @@ async function boot() {
 
 window.addEventListener('hashchange', () => {
   const hash = location.hash.replace('#', '') || '/today';
+  if (hash.startsWith('/verify-email')) {
+    renderVerifyEmail(new URLSearchParams(location.hash.split('?')[1] || '').get('token'));
+    return;
+  }
   if (!state.user && hash !== '/login' && hash !== '/signup') {
     renderAuth(false);
     return;
@@ -113,6 +121,9 @@ function renderAuth(signup) {
       }
       location.hash = '#/today';
       renderApp('/today');
+      if (signup && state.user && state.user.email_verified === false) {
+        showToast('Account created — check your email for a verification link');
+      }
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -122,6 +133,9 @@ function renderAuth(signup) {
 function shellHTML(active, mainHTML) {
   const vacation = state.user?.notifications_paused
     ? `<div class="vacation-banner"><span>Notifications paused${state.user.notifications_paused_until ? ' until ' + new Date(state.user.notifications_paused_until).toLocaleString() : ''}</span><button class="btn btn-sm" id="resume-vacation">Resume</button></div>`
+    : '';
+  const unverified = state.user && state.user.email_verified === false
+    ? `<div class="vacation-banner"><span>Your email isn't verified yet — check your inbox.</span><button class="btn btn-sm" id="resend-verification">Resend email</button></div>`
     : '';
   return `
     <div class="layout">
@@ -142,6 +156,7 @@ function shellHTML(active, mainHTML) {
       </aside>
       <div class="main">
         ${vacation}
+        ${unverified}
         <header class="topbar">
           <strong>${escapeHTML(state.user?.display_name || state.user?.email || 'Day Remind')}</strong>
           <div class="topbar-actions">
@@ -179,6 +194,14 @@ function bindShell(active) {
     renderApp(active);
     showToast('Notifications resumed');
   });
+  document.getElementById('resend-verification')?.addEventListener('click', async () => {
+    try {
+      await API.post('/api/auth/verify-email/resend');
+      showToast('Verification email sent');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
 }
 
 function resolveRoute(route) {
@@ -201,6 +224,11 @@ async function renderApp(route) {
     return;
   }
   if (route.startsWith('/settings')) {
+    const feature = (window.DR_FEATURE_ROUTES || {})[route];
+    if (feature && route !== '/settings') {
+      await feature(route);
+      return;
+    }
     if (route === '/settings/alerts') {
       await renderAlertSettings();
     } else {
@@ -349,6 +377,10 @@ async function renderSettings(route = '/settings') {
         <h3>Alert channels</h3>
         <p>Email and Telegram addresses for reminder alerts.</p>
       </div>
+      <div class="card settings-card" data-href="#/settings/wording">
+        <h3>Message wording</h3>
+        <p>Design the email with HTML and CSS, and customize the message.</p>
+      </div>
       <div class="card settings-card">
         <h3>Profile</h3>
         <p>${escapeHTML(state.user.email)} · ${escapeHTML(state.user.timezone)}${state.user.is_admin ? ' · <span class="badge badge-admin">Admin</span>' : ''}</p>
@@ -396,7 +428,7 @@ async function renderAlertSettings() {
     <p class="page-sub">Choose where Day Remind sends reminder alerts.</p>
     <div class="card alert-channel-card">
       <h3>Email alerts</h3>
-      ${emailUnavailable ? '<p class="channel-unavailable">Email alerts are not configured yet. Ask an admin to set up Resend.</p>' : ''}
+      ${emailUnavailable ? '<p class="channel-unavailable">Email alerts are not configured yet. Ask an admin to set up email delivery (Resend or SMTP).</p>' : ''}
       <label class="checkbox-label"><input id="email-enabled" type="checkbox"${email.enabled ? ' checked' : ''}${emailUnavailable ? ' disabled' : ''}> Enable email alerts</label>
       <div class="field"><label for="email-address">Alert email</label><input id="email-address" type="email" value="${escapeHTML(email.address || state.user.email || '')}"${emailUnavailable ? ' disabled' : ''}></div>
     </div>
@@ -622,6 +654,41 @@ function renderResetPassword(token) {
       showToast(err.message, 'error');
     }
   };
+}
+
+function renderVerifyEmail(token) {
+  const app = document.getElementById('app');
+  if (!token) {
+    app.innerHTML = `
+      <div class="auth-wrap">
+        <div class="auth-card card">
+          <h1>Verify email</h1>
+          <p class="page-sub">Invalid or missing verification link.</p>
+          <a href="#/login">Back to sign in</a>
+        </div>
+      </div>
+    `;
+    return;
+  }
+  app.innerHTML = `
+    <div class="auth-wrap">
+      <div class="auth-card card">
+        <h1>Verify email</h1>
+        <p class="page-sub" id="verify-status">Verifying your email…</p>
+        <p style="text-align:center"><a href="#/login">Back to sign in</a></p>
+      </div>
+    </div>
+  `;
+  (async () => {
+    try {
+      await API.post('/api/auth/verify-email', { token });
+      document.getElementById('verify-status').textContent = 'Your email is verified. You can sign in and start using Day Remind.';
+      showToast('Email verified');
+    } catch (err) {
+      document.getElementById('verify-status').textContent = err.message || 'Verification failed — the link may have expired. Sign in and resend the email.';
+      showToast(err.message, 'error');
+    }
+  })();
 }
 
 if ('serviceWorker' in navigator) {

@@ -1,6 +1,11 @@
 # syntax=docker/dockerfile:1
-FROM golang:1.22-bookworm AS build
+FROM golang:1.25-bookworm AS build
 WORKDIR /src
+# Local replace target (../telegram-gateway) is passed in as the named
+# "telegram-gateway" build context (see docker-compose.yml additional_contexts).
+COPY --from=telegram-gateway go.mod go.sum /telegram-gateway/
+COPY --from=telegram-gateway pkg /telegram-gateway/pkg
+COPY --from=telegram-gateway internal /telegram-gateway/internal
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .

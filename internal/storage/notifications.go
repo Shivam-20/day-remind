@@ -27,32 +27,62 @@ type NotificationPref struct {
 }
 
 type DeliverySettings struct {
-	EmailEnabled         bool
-	EmailFrom            string
-	ResendAPIKey         string
-	TelegramEnabled      bool
-	TelegramBotToken     string
-	TelegramBotUsername  string
-	UpdatedAt            time.Time
+	EmailEnabled        bool
+	EmailFrom           string
+	EmailProvider       string // "resend" (default) or "smtp"
+	ResendAPIKey        string
+	SMTPHost            string
+	SMTPPort            int
+	SMTPUsername        string
+	SMTPPassword        string
+	SMTPTLSMode         string // "starttls" (default), "ssl", "none"
+	TelegramEnabled     bool
+	TelegramBotToken    string
+	TelegramBotUsername string
+	UpdatedAt           time.Time
+
+	TelegramGatewayURL         string
+	TelegramGatewayAPIToken    string
+	TelegramGatewayInboundMode string
 }
 
 type DeliverySettingsUpdate struct {
 	EmailEnabled     *bool
 	EmailFrom        *string
+	EmailProvider    *string
 	ResendAPIKey     *string
+	SMTPHost         *string
+	SMTPPort         *int
+	SMTPUsername     *string
+	SMTPPassword     *string
+	SMTPTLSMode      *string
 	TelegramEnabled  *bool
 	TelegramBotToken *string
+
+	TelegramGatewayURL         *string
+	TelegramGatewayAPIToken    *string
+	TelegramGatewayInboundMode *string
 }
 
 type deliverySettingsDoc struct {
-	ID               string    `bson:"_id"`
-	EmailEnabled     bool      `bson:"email_enabled"`
-	EmailFrom        string    `bson:"email_from"`
-	ResendAPIKey     string    `bson:"resend_api_key"`
-	TelegramEnabled      bool      `bson:"telegram_enabled"`
-	TelegramBotToken     string    `bson:"telegram_bot_token"`
-	TelegramBotUsername  string    `bson:"telegram_bot_username"`
-	UpdatedAt            time.Time `bson:"updated_at"`
+	ID                  string    `bson:"_id"`
+	EmailEnabled        bool      `bson:"email_enabled"`
+	EmailFrom           string    `bson:"email_from"`
+	EmailProvider       string    `bson:"email_provider,omitempty"`
+	ResendAPIKey        string    `bson:"resend_api_key"`
+	SMTPHost            string    `bson:"smtp_host,omitempty"`
+	SMTPPort            int       `bson:"smtp_port,omitempty"`
+	SMTPUsername        string    `bson:"smtp_username,omitempty"`
+	SMTPPassword        string    `bson:"smtp_password,omitempty"`
+	SMTPTLSMode         string    `bson:"smtp_tls_mode,omitempty"`
+	TelegramEnabled     bool      `bson:"telegram_enabled"`
+	TelegramBotToken    string    `bson:"telegram_bot_token"`
+	TelegramBotUsername string    `bson:"telegram_bot_username"`
+	UpdatedAt           time.Time `bson:"updated_at"`
+
+	TelegramGatewayURL         string `bson:"telegram_gateway_url"`
+	TelegramGatewayAPIToken    string `bson:"telegram_gateway_api_token"`
+	TelegramGatewayInboundMode string `bson:"telegram_gateway_inbound_mode"`
 }
 
 const deliverySettingsID = "delivery"
@@ -124,7 +154,7 @@ func (db *DB) UpdateUserNotificationPrefs(ctx context.Context, userID uuid.UUID,
 	res, err := db.collection("users").UpdateOne(ctx, bson.M{"_id": userID}, bson.M{
 		"$set": bson.M{
 			"notification_prefs": docs,
-			"updated_at":           time.Now().UTC(),
+			"updated_at":         time.Now().UTC(),
 		},
 	})
 	if err != nil {
@@ -203,6 +233,44 @@ func (db *DB) UpdateDeliverySettings(ctx context.Context, in DeliverySettingsUpd
 			cur.ResendAPIKey = key
 		}
 	}
+	if in.EmailProvider != nil {
+		provider := strings.ToLower(strings.TrimSpace(*in.EmailProvider))
+		switch provider {
+		case "smtp", "resend":
+			cur.EmailProvider = provider
+		case "":
+			cur.EmailProvider = ""
+		default:
+			return DeliverySettings{}, fmt.Errorf("email provider must be resend or smtp")
+		}
+	}
+	if in.SMTPHost != nil {
+		cur.SMTPHost = strings.TrimSpace(*in.SMTPHost)
+	}
+	if in.SMTPPort != nil {
+		if *in.SMTPPort < 1 || *in.SMTPPort > 65535 {
+			return DeliverySettings{}, fmt.Errorf("smtp port must be between 1 and 65535")
+		}
+		cur.SMTPPort = *in.SMTPPort
+	}
+	if in.SMTPUsername != nil {
+		cur.SMTPUsername = strings.TrimSpace(*in.SMTPUsername)
+	}
+	if in.SMTPPassword != nil {
+		pw := strings.TrimSpace(*in.SMTPPassword)
+		if pw != "" {
+			cur.SMTPPassword = pw
+		}
+	}
+	if in.SMTPTLSMode != nil {
+		mode := strings.ToLower(strings.TrimSpace(*in.SMTPTLSMode))
+		switch mode {
+		case "starttls", "ssl", "none", "":
+			cur.SMTPTLSMode = mode
+		default:
+			return DeliverySettings{}, fmt.Errorf("smtp tls mode must be starttls, ssl or none")
+		}
+	}
 	if in.TelegramEnabled != nil {
 		cur.TelegramEnabled = *in.TelegramEnabled
 	}
@@ -215,16 +283,41 @@ func (db *DB) UpdateDeliverySettings(ctx context.Context, in DeliverySettingsUpd
 			}
 		}
 	}
+	if in.TelegramGatewayURL != nil {
+		cur.TelegramGatewayURL = strings.TrimSpace(*in.TelegramGatewayURL)
+	}
+	if in.TelegramGatewayAPIToken != nil {
+		cur.TelegramGatewayAPIToken = strings.TrimSpace(*in.TelegramGatewayAPIToken)
+	}
+	if in.TelegramGatewayInboundMode != nil {
+		mode := strings.ToLower(strings.TrimSpace(*in.TelegramGatewayInboundMode))
+		switch mode {
+		case "webhook", "both", "":
+			cur.TelegramGatewayInboundMode = mode
+		default:
+			cur.TelegramGatewayInboundMode = "poll"
+		}
+	}
 	cur.UpdatedAt = time.Now().UTC()
 	doc := deliverySettingsDoc{
 		ID:                  deliverySettingsID,
 		EmailEnabled:        cur.EmailEnabled,
 		EmailFrom:           cur.EmailFrom,
+		EmailProvider:       cur.EmailProvider,
 		ResendAPIKey:        cur.ResendAPIKey,
+		SMTPHost:            cur.SMTPHost,
+		SMTPPort:            cur.SMTPPort,
+		SMTPUsername:        cur.SMTPUsername,
+		SMTPPassword:        cur.SMTPPassword,
+		SMTPTLSMode:         cur.SMTPTLSMode,
 		TelegramEnabled:     cur.TelegramEnabled,
 		TelegramBotToken:    cur.TelegramBotToken,
 		TelegramBotUsername: cur.TelegramBotUsername,
 		UpdatedAt:           cur.UpdatedAt,
+
+		TelegramGatewayURL:         cur.TelegramGatewayURL,
+		TelegramGatewayAPIToken:    cur.TelegramGatewayAPIToken,
+		TelegramGatewayInboundMode: cur.TelegramGatewayInboundMode,
 	}
 	opts := options.Update().SetUpsert(true)
 	_, err = db.collection("system_settings").UpdateOne(ctx, bson.M{"_id": deliverySettingsID}, bson.M{"$set": doc}, opts)
@@ -238,10 +331,20 @@ func deliverySettingsFromDoc(doc deliverySettingsDoc) DeliverySettings {
 	return DeliverySettings{
 		EmailEnabled:        doc.EmailEnabled,
 		EmailFrom:           doc.EmailFrom,
+		EmailProvider:       doc.EmailProvider,
 		ResendAPIKey:        doc.ResendAPIKey,
+		SMTPHost:            doc.SMTPHost,
+		SMTPPort:            doc.SMTPPort,
+		SMTPUsername:        doc.SMTPUsername,
+		SMTPPassword:        doc.SMTPPassword,
+		SMTPTLSMode:         doc.SMTPTLSMode,
 		TelegramEnabled:     doc.TelegramEnabled,
 		TelegramBotToken:    doc.TelegramBotToken,
 		TelegramBotUsername: doc.TelegramBotUsername,
 		UpdatedAt:           doc.UpdatedAt,
+
+		TelegramGatewayURL:         doc.TelegramGatewayURL,
+		TelegramGatewayAPIToken:    doc.TelegramGatewayAPIToken,
+		TelegramGatewayInboundMode: doc.TelegramGatewayInboundMode,
 	}
 }

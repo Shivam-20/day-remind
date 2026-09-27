@@ -135,7 +135,7 @@ func (s *Scheduler) dispatchOccurrence(ctx context.Context, occ storage.Reminder
 		return
 	}
 	prefix := occurrencePrefix(occ)
-	s.deliverToChannels(ctx, item, state, deliveryCfg, item.DueAt, prefix)
+	s.deliverToChannels(ctx, item, state, deliveryCfg, item.DueAt, prefix, occurrenceDeliveryContext(occ))
 	_ = s.db.MarkOccurrenceFired(ctx, occ.ID)
 }
 
@@ -153,16 +153,61 @@ func (s *Scheduler) dispatchReminder(ctx context.Context, item reminder.Reminder
 	if inQuietHours(state, item, now) {
 		return
 	}
-	s.deliverToChannels(ctx, item, state, deliveryCfg, item.DueAt, "🔔 Now:")
+	s.deliverToChannels(ctx, item, state, deliveryCfg, item.DueAt, "🔔 Now:", deliveryContext{})
 }
 
-func (s *Scheduler) deliverToChannels(ctx context.Context, item reminder.Reminder, state storage.UserNotifyState, deliveryCfg notify.DeliveryConfig, dueAt time.Time, prefix string) {
+// deliveryContext tells the mail wording when a send fires: an early warning
+// ahead of the due time (with a clean lead label) or the due-time send itself.
+type deliveryContext struct {
+	Advance bool
+	Lead    string
+}
+
+func occurrenceDeliveryContext(occ storage.ReminderOccurrence) deliveryContext {
+	if occ.Kind == storage.OccurrenceKindOffset && occ.OffsetMinutes > 0 {
+		return deliveryContext{Advance: true, Lead: formatOffsetLead(occ.OffsetMinutes)}
+	}
+	return deliveryContext{}
+}
+
+func formatOffsetLead(minutes int) string {
+	switch {
+	case minutes >= 10080 && minutes%10080 == 0:
+		if w := minutes / 10080; w == 1 {
+			return "1 week"
+		} else {
+			return fmt.Sprintf("%d weeks", w)
+		}
+	case minutes >= 1440 && minutes%1440 == 0:
+		if d := minutes / 1440; d == 1 {
+			return "1 day"
+		} else {
+			return fmt.Sprintf("%d days", d)
+		}
+	case minutes >= 60 && minutes%60 == 0:
+		if h := minutes / 60; h == 1 {
+			return "1 hour"
+		} else {
+			return fmt.Sprintf("%d hours", h)
+		}
+	case minutes == 1:
+		return "1 minute"
+	default:
+		return fmt.Sprintf("%d minutes", minutes)
+	}
+}
+
+func (s *Scheduler) deliverToChannels(ctx context.Context, item reminder.Reminder, state storage.UserNotifyState, deliveryCfg notify.DeliveryConfig, dueAt time.Time, prefix string, dctx deliveryContext) {
 	avail := notify.ChannelAvailability(deliveryCfg)
 	channels := orderedChannels(state, avail)
 	if len(channels) == 0 {
 		return
 	}
+	explicit := len(item.ChannelOverrides) > 0
 	for _, ch := range channels {
+		if !overrideAllows(item, ch) {
+			continue
+		}
 		pref := prefForChannel(state.Prefs, ch)
 		if pref == nil {
 			continue
@@ -182,10 +227,20 @@ func (s *Scheduler) deliverToChannels(ctx context.Context, item reminder.Reminde
 			log.Printf("scheduler: create delivery: %v", err)
 			continue
 		}
-		if s.sendDelivery(ctx, d, item, *pref, deliveryCfg, prefix) {
+		if s.sendDelivery(ctx, d, item, *pref, deliveryCfg, prefix, dctx) && !explicit {
 			return
 		}
 	}
+}
+
+// overrideAllows reports whether this reminder should use the channel.
+// An empty override map keeps the account's channels. A saved map sends
+// only the channels marked true.
+func overrideAllows(item reminder.Reminder, channel string) bool {
+	if len(item.ChannelOverrides) == 0 {
+		return true
+	}
+	return item.ChannelOverrides[channel]
 }
 
 func orderedChannels(state storage.UserNotifyState, avail map[string]bool) []string {
@@ -233,7 +288,7 @@ func (s *Scheduler) retryDelivery(ctx context.Context, d storage.Delivery, deliv
 			break
 		}
 	}
-	if !s.sendDelivery(ctx, d, item, pref, deliveryCfg, "🔔 Now:") {
+	if !s.sendDelivery(ctx, d, item, pref, deliveryCfg, "🔔 Now:", deliveryContext{}) {
 		s.tryEscalation(ctx, d, item, state, deliveryCfg)
 	}
 }
@@ -252,6 +307,9 @@ func (s *Scheduler) tryEscalation(ctx context.Context, failed storage.Delivery, 
 		return
 	}
 	nextCh := order[idx+1]
+	if !overrideAllows(item, nextCh) {
+		return
+	}
 	pref := prefForChannel(state.Prefs, nextCh)
 	if pref == nil {
 		return
@@ -267,21 +325,51 @@ func (s *Scheduler) tryEscalation(ctx context.Context, failed storage.Delivery, 
 	if err != nil {
 		return
 	}
-	s.sendDelivery(ctx, d, item, *pref, deliveryCfg, "🔔 Now:")
+	s.sendDelivery(ctx, d, item, *pref, deliveryCfg, "🔔 Now:", deliveryContext{})
 }
 
 // sendDelivery returns true on success.
-func (s *Scheduler) sendDelivery(ctx context.Context, d storage.Delivery, item reminder.Reminder, pref storage.NotificationPref, deliveryCfg notify.DeliveryConfig, prefix string) bool {
+func (s *Scheduler) sendDelivery(ctx context.Context, d storage.Delivery, item reminder.Reminder, pref storage.NotificationPref, deliveryCfg notify.DeliveryConfig, prefix string, dctx deliveryContext) bool {
+	data := s.wordingData(ctx, item, dctx)
 	subject := fmt.Sprintf("%s %s", strings.TrimSpace(prefix), item.Title)
-	body := fmt.Sprintf("<p><strong>%s</strong></p><p>%s</p><p>Due: %s</p>",
-		escapeHTML(item.Title), escapeHTML(item.Description), item.DueAt.UTC().Format(time.RFC3339))
-	text := fmt.Sprintf("%s %s\n%s\nDue: %s", strings.TrimSpace(prefix), item.Title, item.Description, item.DueAt.UTC().Format(time.RFC822))
+	body := notify.DefaultReminderEmail(data)
+	text := fmt.Sprintf("%s %s\n%s\nDue: %s", strings.TrimSpace(prefix), item.Title, item.Description, data.DueAt)
+	telegramHTML := ""
+	var wording *storage.MailWording
+	if item.MailWordingID != nil {
+		wording, _ = s.db.MailWordingByID(ctx, item.UserID, *item.MailWordingID)
+	}
+	if wording == nil {
+		wording, _ = s.db.ActiveMailWording(ctx, item.UserID)
+	}
+	if wording != nil {
+		rendered := notify.RenderWording(notify.Wording{
+			Name: wording.Name, EmailSubject: wording.EmailSubject, EmailHTML: wording.EmailHTML,
+			EmailCSS: wording.EmailCSS, EmailText: wording.EmailText, TelegramText: wording.TelegramText,
+		}, data)
+		if rendered.Subject != "" {
+			subject = rendered.Subject
+		}
+		if rendered.HTML != "" {
+			body = rendered.HTML
+		} else if strings.TrimSpace(rendered.CSS) != "" {
+			body = notify.ApplyCSS(body, rendered.CSS)
+		}
+		if rendered.Text != "" {
+			text = rendered.Text
+		}
+		telegramHTML = rendered.Telegram
+	}
 
 	var err error
 	switch d.Channel {
 	case storage.ChannelEmail:
 		err = notify.SendEmail(ctx, deliveryCfg, pref.Address, subject, body)
 	case storage.ChannelTelegram:
+		if telegramHTML != "" {
+			err = notify.SendTelegramMessage(ctx, deliveryCfg, pref.Address, telegramHTML, notify.TelegramReminderKeyboard(item.ID.String(), s.reminderURL(item.ID)))
+			break
+		}
 		var tb strings.Builder
 		tb.WriteString(strings.TrimSpace(prefix))
 		tb.WriteString(" <b>")
@@ -292,12 +380,8 @@ func (s *Scheduler) sendDelivery(ctx context.Context, d storage.Delivery, item r
 			tb.WriteString(notify.EscapeTelegramHTML(desc))
 		}
 		tb.WriteString("\nDue: ")
-		tb.WriteString(item.DueAt.UTC().Format(time.RFC822))
-		deepLink := ""
-		if base := strings.TrimRight(strings.TrimSpace(s.cfg.WebhookBaseURL), "/"); base != "" {
-			deepLink = base + "/#/reminders?open=" + item.ID.String()
-		}
-		err = notify.SendTelegramMessage(ctx, deliveryCfg, pref.Address, tb.String(), notify.TelegramReminderKeyboard(item.ID.String(), deepLink))
+		tb.WriteString(data.DueAt)
+		err = notify.SendTelegramMessage(ctx, deliveryCfg, pref.Address, tb.String(), notify.TelegramReminderKeyboard(item.ID.String(), s.reminderURL(item.ID)))
 	case storage.ChannelWebPush:
 		err = notify.SendWebPush(ctx, deliveryCfg, pref.Address, subject, text)
 	case storage.ChannelSMS:
@@ -317,6 +401,43 @@ func (s *Scheduler) sendDelivery(ctx context.Context, d storage.Delivery, item r
 	}
 	_ = s.db.MarkDeliverySent(ctx, d.ID)
 	return true
+}
+
+// wordingData assembles everything a mail template can reference for one send.
+func (s *Scheduler) wordingData(ctx context.Context, item reminder.Reminder, dctx deliveryContext) notify.WordingData {
+	data := notify.WordingData{
+		Title:       item.Title,
+		Description: item.Description,
+		DueAt:       notify.FormatDueAt(item.DueAt, item.Timezone),
+		Timezone:    item.Timezone,
+		Priority:    item.Priority,
+		Advance:     dctx.Advance,
+		LeadTime:    dctx.Lead,
+		ReminderURL: s.reminderURL(item.ID),
+	}
+	if loc, lerr := time.LoadLocation(strings.TrimSpace(item.Timezone)); lerr == nil && loc != nil {
+		data.Today = time.Now().In(loc).Format("Mon, 02 Jan 2006")
+	}
+	if user, uerr := s.db.GetUserByID(ctx, item.UserID); uerr == nil {
+		data.UserName = user.DisplayName
+	}
+	if item.ListID != nil {
+		if list, lerr := s.db.GetListByID(ctx, item.UserID, *item.ListID); lerr == nil {
+			data.ListName = list.Name
+		}
+	}
+	if names, terr := s.db.TagNamesByID(ctx, item.UserID, item.TagIDs); terr == nil {
+		data.Tags = strings.Join(names, ", ")
+	}
+	return data
+}
+
+func (s *Scheduler) reminderURL(id uuid.UUID) string {
+	base := strings.TrimRight(strings.TrimSpace(s.cfg.WebhookBaseURL), "/")
+	if base == "" {
+		return ""
+	}
+	return base + "/#/reminders?open=" + id.String()
 }
 
 func occurrencePrefix(occ storage.ReminderOccurrence) string {

@@ -12,31 +12,31 @@ import (
 )
 
 type GoogleIntegration struct {
-	UserID            uuid.UUID
-	Email             string
-	RefreshToken      string
-	CalendarEnabled   bool
-	GmailEnabled      bool
-	CalendarPaused    bool
-	GmailPaused       bool
-	GmailLabelIDs     []string
-	LastCalendarSync  *time.Time
-	LastGmailSync     *time.Time
-	UpdatedAt         time.Time
+	UserID           uuid.UUID
+	Email            string
+	RefreshToken     string
+	CalendarEnabled  bool
+	GmailEnabled     bool
+	CalendarPaused   bool
+	GmailPaused      bool
+	GmailLabelIDs    []string
+	LastCalendarSync *time.Time
+	LastGmailSync    *time.Time
+	UpdatedAt        time.Time
 }
 
 type googleIntegrationDoc struct {
-	UserID            uuid.UUID  `bson:"_id"`
-	Email             string     `bson:"email"`
-	RefreshToken      string     `bson:"refresh_token"`
-	CalendarEnabled   bool       `bson:"calendar_enabled"`
-	GmailEnabled      bool       `bson:"gmail_enabled"`
-	CalendarPaused    bool       `bson:"calendar_paused"`
-	GmailPaused       bool       `bson:"gmail_paused"`
-	GmailLabelIDs     []string   `bson:"gmail_label_ids"`
-	LastCalendarSync  *time.Time `bson:"last_calendar_sync,omitempty"`
-	LastGmailSync     *time.Time `bson:"last_gmail_sync,omitempty"`
-	UpdatedAt         time.Time  `bson:"updated_at"`
+	UserID           uuid.UUID  `bson:"_id"`
+	Email            string     `bson:"email"`
+	RefreshToken     string     `bson:"refresh_token"`
+	CalendarEnabled  bool       `bson:"calendar_enabled"`
+	GmailEnabled     bool       `bson:"gmail_enabled"`
+	CalendarPaused   bool       `bson:"calendar_paused"`
+	GmailPaused      bool       `bson:"gmail_paused"`
+	GmailLabelIDs    []string   `bson:"gmail_label_ids"`
+	LastCalendarSync *time.Time `bson:"last_calendar_sync,omitempty"`
+	LastGmailSync    *time.Time `bson:"last_gmail_sync,omitempty"`
+	UpdatedAt        time.Time  `bson:"updated_at"`
 }
 
 func googleFromDoc(doc googleIntegrationDoc) GoogleIntegration {
@@ -121,7 +121,7 @@ func (db *DB) UpdateGoogleGmailSync(ctx context.Context, userID uuid.UUID, lastS
 	res, err := db.collection("google_integrations").UpdateOne(ctx, bson.M{"_id": userID}, bson.M{
 		"$set": bson.M{
 			"last_gmail_sync": lastSync.UTC(),
-			"updated_at":    time.Now().UTC(),
+			"updated_at":      time.Now().UTC(),
 		},
 	})
 	if err != nil {

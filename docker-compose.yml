@@ -16,7 +16,12 @@ services:
       retries: 5
 
   app:
-    build: .
+    build:
+      context: .
+      # go.mod replaces github.com/shivam-20/telegram-gateway with the local
+      # sibling checkout; expose it to the image build as a named context.
+      additional_contexts:
+        telegram-gateway: ../telegram-gateway
     container_name: day-remind-app
     restart: unless-stopped
     env_file:
@@ -24,6 +29,14 @@ services:
     environment:
       # container reaches mongo by service name (overrides localhost .env value)
       DATABASE_URL: mongodb://dayremind:dayremind@mongo:27017/day_remind?authSource=admin
+      # Telegram Gateway: when TELEGRAM_GATEWAY_URL is set, day-remind routes all
+      # Telegram traffic through the gateway (which holds the bot token).
+      # The gateway container must already be running on apps-net
+      # (see ../telegram-gateway/docker-compose.yml). Both services resolve each
+      # other by Docker DNS name on the shared apps-net network.
+      # TELEGRAM_GATEWAY_URL: http://telegram-gateway:8091
+      # TELEGRAM_GATEWAY_API_TOKEN: tgw_...
+      # TELEGRAM_GATEWAY_INBOUND_MODE: poll
     networks:
       - default
       - apps-net

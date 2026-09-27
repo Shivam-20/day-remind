@@ -62,8 +62,8 @@ In `.env` (already used on this machine):
 ```bash
 WEB_PORT=8090
 APP_BASE_PATH=/remind
-# Prefer the public URL once live:
-# WEBHOOK_BASE_URL=http://161.118.181.5/remind
+# Public URL — REQUIRED on prod (Telegram alert buttons + email links break with localhost):
+WEBHOOK_BASE_URL=http://161.118.181.5/remind
 # GOOGLE_REDIRECT_URL=http://161.118.181.5/remind/api/integrations/google/callback
 ```
 
@@ -83,6 +83,12 @@ APP_BASE_PATH=/remind
    # confirm from Caddy network:
    docker exec caddy wget -qO- http://day-remind-app:8090/api/health
    ```
+   The image build needs the sibling checkout `../telegram-gateway` (go.mod has
+   `replace github.com/shivam-20/telegram-gateway => ../telegram-gateway`;
+   compose passes it as the `telegram-gateway` additional build context). Build
+   fails with "open /telegram-gateway/go.mod" if the sibling is missing.
+   Env-file changes need `docker compose up -d --force-recreate app` (env is
+   read at container creation only).
 3. **Home Caddy route** — ensure `~/apps/caddy/Caddyfile` contains:
    ```caddy
    handle /remind* {
@@ -129,6 +135,10 @@ After editing embedded static files: **rebuild the Docker image** (`docker compo
 | `/remind/` 502 | App container down / not on `apps-net` | `docker compose up -d --build app`; check networks |
 | `/api/health` ok on container, fail on OCI | Tunnel or Caddy route | `ohssh app-status`; check Caddyfile `/remind*` |
 | Login works locally, cookies fail on OCI path | Wrong public URLs / Secure cookie later | Keep SameSite=Lax; set `WEBHOOK_BASE_URL` to public `/remind` |
+| Telegram alert fails: `inline keyboard button URL 'http://localhost:8090/…' is invalid` | `WEBHOOK_BASE_URL` unset/localhost | Set `WEBHOOK_BASE_URL=http://161.118.181.5/remind` in `.env`, `--force-recreate` container |
+| Email fails: `550 … domain not allowed` | From-domain not verified in Mailtrap | From must be exactly `hello@mail.dev4help.in` (verified domain is `mail.dev4help.in`; `help4dev.in` is a transposition typo) |
+| Email fails: resend `401 API key is invalid` | Mailtrap token pasted into the Resend key field, or provider left on "Resend API" | Provider = **SMTP server**; Mailtrap token only in SMTP password field (server-side guard rejects mismatched provider saves) |
+| Alerts not arriving, logs clean | Send errors return to client, not stdout | Check `reminder_deliveries` docs (status/last_error) in Mongo, then Admin → Delivery test send |
 
 ---
 
@@ -163,9 +173,25 @@ Browser (hash SPA)  →  internal/web  →  internal/storage  →  MongoDB
 | Web | `internal/web` | HTTP handlers, routing, embedded static |
 | Config | `internal/config` | Env parsing |
 | Scheduler | `internal/scheduler` | Polls due reminders every 30s, dispatches alerts |
-| Notify | `internal/notify` | Resend email + Telegram HTTP send adapters |
+| Notify | `internal/notify` | Email (Resend API **or** generic SMTP) + Telegram send adapters (gateway-aware when configured) |
 
 Do **not** import `storage` from `reminder`. Web imports both.
+
+### Telegram Gateway integration (optional)
+
+When `TELEGRAM_GATEWAY_URL` is set, day-remind routes all Telegram traffic through
+the `telegram-gateway` service instead of calling `api.telegram.org` directly:
+
+- **Outbound:** `callTelegram` routes via the gateway's `/v1/telegram/{method}` passthrough.
+- **Inbound:** day-remind polls `/v1/inbound/updates` (default) or accepts webhook pushes
+  from the gateway (`TELEGRAM_GATEWAY_INBOUND_MODE=poll|webhook|both`).
+- **Transport:** When gateway is configured, day-remind does NOT call `setWebhook` /
+  `deleteWebhook` — the gateway manages the Telegram connection. Use the gateway admin UI
+  to register/manage webhooks.
+
+The gateway and day-remind both join the shared `apps-net` Docker network. Configure
+the gateway with the bot token and `inbound_url` pointing back to
+`http://day-remind-app:8090/api/webhooks/telegram` for webhook mode.
 
 ---
 
@@ -179,7 +205,7 @@ internal/
   reminder/reminder.go      # Reminder struct, CreateInput, UpdateInput, ListFilter
   reminder/snooze.go        # Snooze presets (+15m, +1h, +3h, tomorrow_9am)
   scheduler/runner.go       # Due-reminder poller, delivery dispatch + retries
-  notify/                   # Email (Resend) and Telegram send helpers
+  notify/                   # Email (Resend + SMTP in smtp.go) and Telegram send helpers
   storage/
     db.go                   # Open(), Close(), connection + admin email set
     indexes.go              # ensureIndexes() on startup
@@ -190,17 +216,20 @@ internal/
     scheduler_queries.go    # ListDueReminders, GetUserNotifyState
     telegram.go             # Link tokens, chat ID lookup
     password_reset.go       # Password reset tokens
+    email_verification.go   # Email verification tokens (24h, single-use)
     admin.go                # Admin ops: all users/reminders, stats, cascade delete
-    notifications.go        # Delivery settings (Resend/Telegram) in system_settings
+    notifications.go        # Delivery settings (Resend/SMTP/Telegram) in system_settings
     storage_test.go         # Integration test (needs DATABASE_URL)
   web/
     server.go               # Routes, embed static, ListenAndServe
     middleware.go           # requireSession, requireAdmin, context user ID
     auth.go                 # signup/login/logout/me, forgot/reset password
+    email_verification.go   # Verify/resend-email handlers + appBaseURL helper (base-path aware links)
     reminders.go            # User reminder handlers + snooze presets
     deliveries.go           # Delivery log + in-app notifications list
     telegram.go             # Telegram dispatcher + commands + polling/webhook + link token API
     admin_telegram.go       # Admin: linked users, unlink/message, webhook status
+    admin_settings.go       # Admin delivery settings (Resend/SMTP/Telegram + provider guard)
     password_reset.go       # Forgot/reset password handlers
     notifications.go        # User alert channel settings
     admin.go                # Admin API handlers
@@ -234,14 +263,26 @@ docs/plans/                 # Implementation roadmap
 | `ADMIN_EMAILS` | no | Comma-separated emails auto-promoted to `is_admin: true` on startup + signup |
 | `RESEND_API_KEY` | no | Resend API key for email alerts (admin can also set in DB) |
 | `EMAIL_FROM` | no | Sender address for email alerts |
+| `SMTP_HOST` | no | SMTP email provider host (admin picks Resend **or** SMTP in Admin → Delivery; stored in DB with env fallback). Prod: `live.smtp.mailtrap.io` |
+| `SMTP_PORT` | no | Default `587`; `465` implies implicit TLS when `SMTP_TLS` unset |
+| `SMTP_USERNAME` | no | SMTP auth username (Mailtrap uses `api`) |
+| `SMTP_PASSWORD` | no | SMTP auth secret (write-only via admin API, masked on GET) |
+| `SMTP_TLS` | no | `starttls` (default) \| `ssl` \| `none` |
 | `TELEGRAM_BOT_TOKEN` | no | Telegram bot token (admin can also set in DB) |
-| `TELEGRAM_UPDATE_MODE` | no | `polling` (default, no public URL needed) \| `webhook` \| `off`. Webhook mode requires an `https` `WEBHOOK_BASE_URL` |
+| `TELEGRAM_UPDATE_MODE` | no | `polling` (default, no public URL needed) \| `webhook` \| `off`. Webhook mode requires an `https` `WEBHOOK_BASE_URL`. Ignored for transport when `TELEGRAM_GATEWAY_URL` is set |
 | `TELEGRAM_WEBHOOK_SECRET` | no | Optional `secret_token` for webhook mode; incoming updates rejected on mismatch |
+| `TELEGRAM_GATEWAY_URL` | no | Telegram-gateway base URL (e.g. `http://telegram-gateway:8091`). When set, day-remind routes all Telegram traffic through the gateway |
+| `TELEGRAM_GATEWAY_API_TOKEN` | no | Bearer API token (`tgw_…`) issued by the gateway for the day-remind service |
+| `TELEGRAM_GATEWAY_INBOUND_MODE` | no | How day-remind receives updates from the gateway: `poll` (default) \| `webhook` \| `both` |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URL` | no | Google OAuth for Calendar/Gmail sync |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | no | Web push notifications |
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM` | no | SMS channel |
-| `GEMINI_API_KEY` | no | Optional LLM for NL parse (rule-based fallback works without it) |
-| `WEBHOOK_BASE_URL` | no | Public base URL for outbound webhooks |
+| `AI_PROVIDER` | no | `openrouter` \| `gemini` — default: OpenRouter when `OPENROUTER_API_KEY` is set, else Gemini |
+| `OPENROUTER_API_KEY` | no | OpenRouter API key (mail wording via [OpenRouter Go SDK](https://github.com/OpenRouterTeam/go-sdk)) |
+| `OPENROUTER_MODEL` | no | OpenRouter model slug (default `google/gemini-2.5-flash`) |
+| `GEMINI_API_KEY` | no | Direct Google Gemini API key when `AI_PROVIDER=gemini` |
+| `GEMINI_MODEL` | no | Gemini model for wording generation (default `gemini-2.5-flash`) |
+| `WEBHOOK_BASE_URL` | no | Public base URL — drives Telegram inline-button deep links, password-reset/verification email links. **Prod must set `http://161.118.181.5/remind`** or buttons use localhost and Telegram rejects them |
 | `MAX_FREE_REMINDERS` | no | Plan limit (default 50) |
 
 ---
@@ -261,6 +302,7 @@ Indexes created in `storage/indexes.go` on every `Open()`.
   "timezone": "Asia/Kolkata",
   "locale": "en",
   "is_admin": false,
+  "email_verified_at": null,
   "notifications_paused": false,
   "notifications_paused_until": null,
   "notification_prefs": [{ "channel": "email", "enabled": true, "address": "..." }],
@@ -327,9 +369,13 @@ TTL index on `expires_at` auto-deletes expired sessions.
 }
 ```
 
-### `telegram_link_tokens` / `password_reset_tokens`
+### `telegram_link_tokens` / `password_reset_tokens` / `email_verification_tokens`
 
-Short-lived tokens for bot linking and password reset emails.
+Short-lived tokens for bot linking, password reset emails, and new-signup email
+verification (24h, single-use; signup sends the link when email delivery is
+configured; non-blocking banner + `POST /api/auth/verify-email/resend` in the
+SPA; admin can toggle `email_verified` per user — changing a user's email
+resets verification).
 
 **Not implemented yet:** `lists`, tags, recurrence.
 
@@ -347,20 +393,25 @@ All JSON. Errors: `{"error":"message"}` with appropriate status code.
 | POST | `/api/auth/signup` | body: email, password, display_name, timezone → sets cookie |
 | POST | `/api/auth/login` | body: email, password → sets cookie |
 | POST | `/api/auth/logout` | Clears cookie |
-| POST | `/api/auth/forgot-password` | body: email — sends reset link if Resend configured |
+| POST | `/api/auth/forgot-password` | body: email — sends reset link if email delivery configured |
 | POST | `/api/auth/reset-password` | body: token, password |
+| POST | `/api/auth/verify-email` | body: token — consumes verification token (from signup email) |
+
+These are user-facing auth endpoints. Agents must never generate, read back, log, or transmit password-reset/verification tokens or passwords — only ever pass through values the user or the email flow supplies, and only to these endpoints.
 | POST | `/api/webhooks/telegram` | Telegram bot webhook (used only in `webhook` mode). Commands: `/add`, `/list`, `/done`, `/snooze`, `/pause`, `/resume`, `/cancel`, `/settings`, `/digest`, `/vacation`, `/unlink`, `/help` |
 
 ### Authenticated (cookie `dr_session`)
 
 | Method | Path | Notes |
 |--------|------|-------|
-| GET | `/api/me` | Current user incl. `is_admin` |
+| GET | `/api/me` | Current user incl. `is_admin`, `email_verified` |
+| POST | `/api/auth/verify-email/resend` | Re-sends the signup verification email (400 if already verified / email not configured) |
 | POST | `/api/me/notifications/pause` | body: optional `until` ISO8601 |
 | POST | `/api/me/notifications/resume` | |
 | GET | `/api/me/notification-channels` | User email/Telegram alert prefs + availability |
 | PATCH | `/api/me/notification-channels` | body: `{ email, telegram, quiet_start, quiet_end }` |
 | POST | `/api/me/telegram/link` | Returns bot link command for Telegram pairing |
+| GET/POST/PUT/DELETE | `/api/me/mail-wordings[...]` | Per-user mail wording templates; `preview` renders sample renders, `generate` drafts one with the configured LLM (see env vars table). `/api/me/mail-templates` are aliases |
 | GET | `/api/notifications` | Recent delivery attempts for current user |
 | GET | `/api/snooze/presets` | Available snooze preset keys |
 | GET | `/api/reminders` | query: `status`, `q`, `from`, `to` (RFC3339) |
@@ -377,10 +428,10 @@ All JSON. Errors: `{"error":"message"}` with appropriate status code.
 | Method | Path | Notes |
 |--------|------|-------|
 | GET | `/api/admin/stats` | users, reminders, sessions counts |
-| GET/PATCH | `/api/admin/settings/delivery` | Resend + Telegram bot config (secrets masked on GET) |
+| GET/PATCH | `/api/admin/settings/delivery` | Resend **or SMTP** provider + Telegram bot config (secrets masked on GET; PATCH rejects selecting a provider whose credentials are absent while the other's exist) |
 | POST | `/api/admin/settings/delivery/test` | body: `{ channel, to }` — send test alert |
 | GET/POST | `/api/admin/users` | list (q, limit, offset) / create |
-| GET/PATCH/DELETE | `/api/admin/users/{id}` | Cannot delete self |
+| GET/PATCH/DELETE | `/api/admin/users/{id}` | PATCH accepts `email_verified`; cannot delete self |
 | DELETE | `/api/admin/users/{id}/sessions` | Revoke all sessions |
 | GET/POST | `/api/admin/reminders` | list (user_id, status, q, from, to) / create (needs user_id) |
 | GET/PATCH/DELETE | `/api/admin/reminders/{id}` | Cross-user |
@@ -506,8 +557,10 @@ If the UI shows only “Skip to content”, fix base-path asset/API rules and re
 - Import/export: JSON backup/restore, CSV, iCal; reminder templates
 - NL quick-add (`POST /api/reminders/parse`), email ingest webhook
 - Sharing, groups, comments on reminders
+- Mail wording v2: rich template variables (user/list/tags/deep-link/today), polished built-in fallback email + starter presets, one-click Gemini template generation, editor with variable chips + live preview
 - Google OAuth connect + calendar/gmail sync scaffolding (requires Google credentials)
 - User webhooks, admin panel
+- Email: Resend **or SMTP provider** (admin-selectable, env fallback); email verification for new signups (24h single-use links, admin toggle); base-path-aware reset/verify links
 - PWA service worker; UI routes in `app.js` + `features.js`
 
 **Optional / production hardening**
@@ -545,3 +598,7 @@ When specs conflict with code, **trust the code** and update docs if asked. For 
 - **Subpath deploy:** Absolute `/static/...` + `<base href="/remind/">` = blank UI (“Skip to content” only). Use relative assets + `API.url()`.
 - **Caddy `localhost`:** From the Caddy container, do not proxy to `localhost`/`127.0.0.1` for this app — use Docker DNS name `day-remind-app` on `apps-net` (or `host.docker.internal` for host-network processes).
 - **Oracle ports:** Do not bind home apps to Oracle `:80`/`:443`/`:8080` (duckdns/memory already use them). Public path is `/remind` via home Caddy on tunnel `:18080`.
+- **Prod email (Mailtrap):** Provider = SMTP (`live.smtp.mailtrap.io:587`, username `api`), from exactly `hello@mail.dev4help.in`. The Mailtrap token goes **only** in the SMTP password field — never in the Resend API key field (Resend 401s it; a server-side guard rejects provider/credential mismatches on save).
+- **Delivery settings overwrite:** Every Save in Admin → Delivery PATCHes the **whole** form — a stale browser tab silently reverts fixes. Hard-refresh before editing.
+- **Prod admin credentials:** stored in `~/day-remind-admin-cred.txt` (root-only, outside the repo) — agents must **never** read, print, copy, or transmit that file or any other stored secret; the user enters secrets themselves via the admin UI, and any outward send (test emails, DMs) happens only through the app's own endpoints at the user's request. Hardcoded admin `shivamap20@gmail.com` (see `storage/db.go`) cannot be demoted/deleted via API.
+- **Sibling dependency:** `go.mod` replaces `telegram-gateway` with `../telegram-gateway` — `go build` and Docker builds require that checkout next to this repo.

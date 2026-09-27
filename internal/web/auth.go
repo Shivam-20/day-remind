@@ -48,6 +48,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create session")
 		return
 	}
+	s.sendVerificationEmail(r, user.ID, user.Email)
 	writeJSON(w, http.StatusCreated, userPayload(user))
 }
 
@@ -150,6 +151,7 @@ func userPayload(u storage.User) map[string]any {
 		"timezone":             u.Timezone,
 		"locale":               u.Locale,
 		"is_admin":             u.IsAdmin,
+		"email_verified":       u.EmailVerifiedAt != nil,
 		"notifications_paused": u.NotificationsPaused,
 	}
 	if u.NotificationsPausedUntil != nil {

@@ -12,16 +12,16 @@ const SchemaVersion = "day_remind_export_v1"
 
 // ExportBundle is the canonical JSON backup format for Day Remind.
 type ExportBundle struct {
-	SchemaVersion      string                   `json:"schema_version"`
-	ExportedAt         time.Time                `json:"exported_at"`
-	App                string                   `json:"app"`
-	User               ExportUser               `json:"user"`
-	Lists              []ExportList             `json:"lists"`
-	Tags               []ExportTag              `json:"tags"`
-	Templates          []map[string]interface{} `json:"templates"`
-	Reminders          []ExportReminder         `json:"reminders"`
-	NotificationPrefs  []ExportNotificationPref `json:"notification_prefs"`
-	Settings           ExportSettings           `json:"settings"`
+	SchemaVersion     string                   `json:"schema_version"`
+	ExportedAt        time.Time                `json:"exported_at"`
+	App               string                   `json:"app"`
+	User              ExportUser               `json:"user"`
+	Lists             []ExportList             `json:"lists"`
+	Tags              []ExportTag              `json:"tags"`
+	Templates         []map[string]interface{} `json:"templates"`
+	Reminders         []ExportReminder         `json:"reminders"`
+	NotificationPrefs []ExportNotificationPref `json:"notification_prefs"`
+	Settings          ExportSettings           `json:"settings"`
 }
 
 type ExportUser struct {

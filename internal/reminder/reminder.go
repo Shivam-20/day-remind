@@ -22,6 +22,7 @@ type Reminder struct {
 	ID                 uuid.UUID
 	UserID             uuid.UUID
 	ListID             *uuid.UUID
+	MailWordingID      *uuid.UUID
 	Title              string
 	Description        string
 	DueAt              time.Time
@@ -53,6 +54,7 @@ type CreateInput struct {
 	Timezone           string
 	Priority           string
 	ListID             *uuid.UUID
+	MailWordingID      *uuid.UUID
 	TagIDs             []uuid.UUID
 	RecurrenceRule     string
 	SeriesID           *uuid.UUID
@@ -72,6 +74,8 @@ type UpdateInput struct {
 	Priority           *string
 	Status             *string
 	ListID             *uuid.UUID
+	MailWordingID      *uuid.UUID
+	ClearMailWording   bool
 	TagIDs             *[]uuid.UUID
 	RecurrenceRule     *string
 	SeriesID           *uuid.UUID

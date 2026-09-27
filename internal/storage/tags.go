@@ -169,3 +169,34 @@ func (db *DB) SetReminderTags(ctx context.Context, userID, reminderID uuid.UUID,
 	}
 	return db.GetReminder(ctx, userID, reminderID)
 }
+
+// TagNamesByID returns the names of the given tags in the order requested.
+// Unknown ids are skipped.
+func (db *DB) TagNamesByID(ctx context.Context, userID uuid.UUID, ids []uuid.UUID) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	cur, err := db.collection("tags").Find(ctx, bson.M{"user_id": userID, "_id": bson.M{"$in": ids}})
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+	byID := make(map[uuid.UUID]string, len(ids))
+	for cur.Next(ctx) {
+		var doc tagDoc
+		if err := cur.Decode(&doc); err != nil {
+			return nil, err
+		}
+		byID[doc.ID] = doc.Name
+	}
+	if err := cur.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if name := byID[id]; name != "" {
+			out = append(out, name)
+		}
+	}
+	return out, nil
+}

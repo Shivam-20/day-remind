@@ -205,6 +205,15 @@ func ensureIndexes(ctx context.Context, db *mongo.Database) error {
 			},
 		},
 		{
+			collection: "email_verification_tokens",
+			indexes: []mongo.IndexModel{
+				{
+					Keys:    bson.D{{Key: "expires_at", Value: 1}},
+					Options: options.Index().SetExpireAfterSeconds(0),
+				},
+			},
+		},
+		{
 			collection: "templates",
 			indexes: []mongo.IndexModel{
 				{

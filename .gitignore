@@ -2,3 +2,7 @@
 bin/
 data/
 *.db
+
+# AI tooling caches
+.mimosa/
+.v2c/

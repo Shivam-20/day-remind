@@ -24,6 +24,7 @@ type User struct {
 	Timezone                 string
 	Locale                   string
 	IsAdmin                  bool
+	EmailVerifiedAt          *time.Time
 	NotificationsPaused      bool
 	NotificationsPausedUntil *time.Time
 	CreatedAt                time.Time
@@ -42,6 +43,7 @@ type AdminUserUpdate struct {
 	Timezone                 *string
 	Locale                   *string
 	IsAdmin                  *bool
+	EmailVerified            *bool
 	NotificationsPaused      *bool
 	NotificationsPausedUntil *time.Time
 	PasswordHash             *string
@@ -65,6 +67,7 @@ type userDoc struct {
 	NotificationsPaused      bool                  `bson:"notifications_paused"`
 	NotificationsPausedUntil *time.Time            `bson:"notifications_paused_until,omitempty"`
 	IsAdmin                  bool                  `bson:"is_admin"`
+	EmailVerifiedAt          *time.Time            `bson:"email_verified_at,omitempty"`
 	QuietStart               string                `bson:"quiet_start,omitempty"`
 	QuietEnd                 string                `bson:"quiet_end,omitempty"`
 	MorningDigestEnabled     bool                  `bson:"morning_digest_enabled"`
@@ -97,6 +100,7 @@ func userFromDoc(doc userDoc) User {
 		Timezone:                 doc.Timezone,
 		Locale:                   doc.Locale,
 		IsAdmin:                  doc.IsAdmin,
+		EmailVerifiedAt:          doc.EmailVerifiedAt,
 		NotificationsPaused:      doc.NotificationsPaused,
 		NotificationsPausedUntil: doc.NotificationsPausedUntil,
 		CreatedAt:                doc.CreatedAt,

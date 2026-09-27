@@ -114,9 +114,9 @@ func (db *DB) MarkDeliveryFailed(ctx context.Context, id uuid.UUID, errMsg strin
 	now := time.Now().UTC()
 	res, err := db.collection("reminder_deliveries").UpdateOne(ctx, bson.M{"_id": id}, bson.M{
 		"$set": bson.M{
-			"status":        DeliveryStatusFailed,
-			"last_error":    errMsg,
-			"updated_at":    now,
+			"status":     DeliveryStatusFailed,
+			"last_error": errMsg,
+			"updated_at": now,
 		},
 		"$inc": bson.M{"attempt_count": 1},
 	})

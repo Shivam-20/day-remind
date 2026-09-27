@@ -7,6 +7,7 @@ window.DR_FEATURE_ROUTES = {
   '/settings': renderSettingsEnhanced,
   '/settings/data': renderDataSettings,
   '/settings/templates': renderTemplateGallery,
+  '/settings/wording': renderMessageWording,
   '/settings/google': renderGoogleSettings,
   '/settings/account': renderAccountSettings,
 };
@@ -28,6 +29,12 @@ const OFFSET_PRESETS = [
   { label: '1d', minutes: 1440 },
   { label: '1w', minutes: 10080 },
 ];
+
+function sendByLabel(overrides) {
+  const names = { email: 'Email', telegram: 'Telegram' };
+  const picked = Object.keys(overrides || {}).filter((key) => overrides[key]).map((key) => names[key] || key);
+  return picked.length ? picked.join(', ') : 'Account default';
+}
 
 const RECURRENCE_PRESETS = [
   { value: '', label: 'None' },
@@ -152,11 +159,11 @@ async function renderCalendar() {
 async function renderLists() {
   const data = await API.get('/api/lists');
   const lists = data.lists || [];
-  const cards = lists.length
-    ? lists.map((l) => `
+  const countLabel = lists.length === 1 ? '1 list' : `${lists.length} lists`;
+  const cards = lists.map((l) => `
         <article class="list-card card" style="--list-color:${escapeHTML(l.color || '#3b82f6')}">
           <div class="list-card-stripe"></div>
-          <div>
+          <div class="list-card-body">
             <h3>${escapeHTML(l.name)}</h3>
             <p class="page-sub">${l.count ?? 0} active · ${l.paused ? 'Paused' : 'Active'}</p>
           </div>
@@ -166,23 +173,31 @@ async function renderLists() {
               : `<button class="btn btn-sm" data-pause="${l.id}">Pause</button>`}
           </div>
         </article>
-      `).join('')
-    : emptyState('No lists yet', 'Create a list to organize reminders.', '<button class="btn btn-primary" id="new-list-btn">Create list</button>');
+      `).join('');
+  const body = lists.length
+    ? `<div class="list-cards">${cards}</div>
+       <p class="list-page-footer"><a href="#/reminders" class="btn btn-ghost btn-sm">View all reminders</a></p>`
+    : emptyState(
+        'No lists yet',
+        'Create a list to organize reminders.',
+        '<button class="btn btn-primary" data-new-list>Create list</button><a href="#/reminders" class="btn btn-ghost btn-sm">View all reminders</a>'
+      );
 
   const main = `
     <div class="page-header-row">
-      <div>
+      <div class="page-header-text">
         <h1 class="page-title">Lists</h1>
-        <p class="page-sub">${lists.length} list(s)</p>
+        <p class="page-sub">${countLabel}</p>
       </div>
-      <button class="btn btn-primary btn-sm" id="new-list-btn">+ New list</button>
+      <button class="btn btn-primary btn-sm" data-new-list>+ New list</button>
     </div>
-    <div class="list-cards">${cards}</div>
-    <a href="#/reminders" class="btn btn-ghost btn-sm" style="margin-top:16px">View all reminders</a>
+    ${body}
   `;
   document.getElementById('app').innerHTML = shellHTML('/lists', main);
   bindShell('/lists');
-  document.getElementById('new-list-btn')?.addEventListener('click', openCreateListModal);
+  document.querySelectorAll('[data-new-list]').forEach((btn) => {
+    btn.addEventListener('click', openCreateListModal);
+  });
   document.querySelectorAll('[data-pause]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       await API.post(`/api/lists/${btn.dataset.pause}/pause`);
@@ -666,7 +681,11 @@ async function renderRemindersEnhanced() {
 }
 
 async function openCreateDrawerEnhanced() {
-  await loadListsAndTags().catch(() => {});
+  const [, wordingLib, channelLib] = await Promise.all([
+    loadListsAndTags().catch(() => {}),
+    API.get('/api/me/mail-templates').catch(() => ({ templates: [] })),
+    API.get('/api/me/notification-channels').catch(() => ({ channels: {} })),
+  ]);
   const defaultDue = new Date();
   defaultDue.setHours(defaultDue.getHours() + 1, 0, 0, 0);
   const local = new Date(defaultDue.getTime() - defaultDue.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -680,6 +699,19 @@ async function openCreateDrawerEnhanced() {
   const recurOpts = RECURRENCE_PRESETS.map((p) =>
     `<option value="${p.value}">${p.label}</option>`
   ).join('');
+  const templateOpts = (wordingLib.templates || []).map((t) =>
+    `<option value="${escapeAttr(t.id)}">${escapeHTML(t.name)}${t.active ? ' (in use)' : ''}</option>`
+  ).join('');
+  const channelState = channelLib.channels || {};
+  const sendBy = [
+    { id: 'email', label: 'Email' },
+    { id: 'telegram', label: 'Telegram' },
+  ].map((ch) => {
+    const info = channelState[ch.id] || {};
+    const unavailable = info.available === false;
+    const checked = !unavailable && info.enabled !== false && (ch.id === 'email' || info.enabled);
+    return `<label class="tag-chip"><input type="checkbox" name="send-by" value="${ch.id}"${checked ? ' checked' : ''}${unavailable ? ' disabled' : ''}> ${ch.label}</label>`;
+  }).join('');
 
   const drawer = openDrawer('New reminder', `
     <div class="field"><label for="r-title">Title</label><input id="r-title" required></div>
@@ -691,6 +723,10 @@ async function openCreateDrawerEnhanced() {
     <div class="field"><label for="r-list">List</label><select id="r-list"><option value="">No list</option>${listOpts}</select></div>
     ${tagChips ? `<div class="field"><label>Tags</label><div class="chip-row">${tagChips}</div></div>` : ''}
     <div class="field"><label for="r-recur">Recurrence</label><select id="r-recur">${recurOpts}</select></div>
+    <div class="field"><label for="r-template">Message template</label>
+      <select id="r-template"><option value="">Account default</option>${templateOpts}</select>
+    </div>
+    <div class="field"><label>Send by</label><div class="chip-row">${sendBy}</div></div>
     <div class="field"><label>Remind before</label><div class="chip-row">${offsetChips}</div></div>
   `, `<button class="btn" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" id="save-reminder">Save</button>`);
   drawer.querySelector('[data-close-drawer]').addEventListener('click', closeDrawer);
@@ -707,6 +743,13 @@ async function openCreateDrawerEnhanced() {
     }));
     const recurPreset = document.getElementById('r-recur').value;
     const listId = document.getElementById('r-list').value;
+    const templateId = document.getElementById('r-template').value;
+    const sendByBoxes = [...drawer.querySelectorAll('input[name="send-by"]')];
+    const selectedChannels = sendByBoxes.filter((el) => el.checked).map((el) => el.value);
+    if (sendByBoxes.some((el) => !el.disabled) && selectedChannels.length === 0) {
+      showToast('Choose at least one way to send', 'error');
+      return;
+    }
     const body = {
       title,
       description: document.getElementById('r-desc').value,
@@ -716,8 +759,10 @@ async function openCreateDrawerEnhanced() {
       tag_ids: tagIDs,
       recurrence_rule: buildRecurrenceRule(recurPreset, dueLocal),
       offsets,
+      channel_overrides: Object.fromEntries(sendByBoxes.filter((el) => !el.disabled).map((el) => [el.value, el.checked])),
     };
     if (listId) body.list_id = listId;
+    if (templateId) body.mail_wording_id = templateId;
     try {
       await API.post('/api/reminders', body);
       closeDrawer();
@@ -734,17 +779,21 @@ async function openReminderDrawerEnhanced(id) {
   let deliveries = [];
   let subtasks = [];
   let comments = [];
+  let wordingLib = { templates: [] };
   try {
-    [reminder, deliveries, subtasks, comments] = await Promise.all([
+    [reminder, deliveries, subtasks, comments, wordingLib] = await Promise.all([
       API.get(`/api/reminders/${id}`),
       API.get(`/api/reminders/${id}/deliveries`).then((d) => d.deliveries || []).catch(() => []),
       API.get(`/api/reminders/${id}/subtasks`).then((d) => d.subtasks || []).catch(() => []),
       API.get(`/api/reminders/${id}/comments`).then((d) => d.comments || []).catch(() => []),
+      API.get('/api/me/mail-templates').catch(() => ({ templates: [] })),
     ]);
   } catch (err) {
     showToast(err.message, 'error');
     return;
   }
+  const chosenWording = (wordingLib.templates || []).find((t) => t.id === reminder.mail_wording_id);
+  reminder.mail_wording_name = chosenWording ? chosenWording.name : '';
   const doneCount = subtasks.filter((s) => s.done).length;
   const subtaskHTML = subtasks.length
     ? `<div class="subtask-progress">${doneCount}/${subtasks.length} complete</div>
@@ -772,6 +821,8 @@ async function openReminderDrawerEnhanced(id) {
       <dt>Due</dt><dd>${new Date(reminder.due_at).toLocaleString()}</dd>
       <dt>Status</dt><dd>${escapeHTML(reminder.status)}</dd>
       <dt>Priority</dt><dd>${escapeHTML(reminder.priority)}</dd>
+      <dt>Template</dt><dd>${escapeHTML(reminder.mail_wording_name || 'Account default')}</dd>
+      <dt>Send by</dt><dd>${escapeHTML(sendByLabel(reminder.channel_overrides))}</dd>
     </dl>
     <h3 style="font-size:1rem;margin:20px 0 8px">Subtasks</h3>
     ${subtaskHTML}
@@ -821,6 +872,10 @@ function renderSettingsEnhanced(route) {
       <div class="card settings-card" data-href="#/settings/alerts">
         <h3>Alert channels</h3>
         <p>Email and Telegram addresses for reminder alerts.</p>
+      </div>
+      <div class="card settings-card" data-href="#/settings/wording">
+        <h3>Message wording</h3>
+        <p>Design the email with HTML and CSS, and customize the message.</p>
       </div>
       <div class="card settings-card" data-href="#/settings/data">
         <h3>Data</h3>

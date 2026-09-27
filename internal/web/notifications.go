@@ -32,6 +32,23 @@ func (s *Server) effectiveDelivery(r *http.Request) (notify.DeliveryConfig, erro
 	return s.deliveryConfig(r.Context())
 }
 
+func (s *Server) effectiveAI(ctx context.Context) (notify.AIConfig, error) {
+	if s.db == nil {
+		return notify.AIConfigFromEnv(
+			s.cfg.AIProvider,
+			s.cfg.GeminiAPIKey,
+			s.cfg.GeminiModel,
+			s.cfg.OpenRouterAPIKey,
+			s.cfg.OpenRouterModel,
+		), nil
+	}
+	stored, err := s.db.GetAISettings(ctx)
+	if err != nil {
+		return notify.AIConfig{}, err
+	}
+	return notify.EffectiveAI(s.cfg, stored), nil
+}
+
 func (s *Server) handleGetNotificationChannels(w http.ResponseWriter, r *http.Request) {
 	userID := userIDFromContext(r.Context())
 	prefs, err := s.db.GetUserNotificationPrefs(r.Context(), userID)

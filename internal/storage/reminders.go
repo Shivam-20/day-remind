@@ -14,31 +14,32 @@ import (
 )
 
 type reminderDoc struct {
-	ID                 uuid.UUID         `bson:"_id"`
-	UserID             uuid.UUID         `bson:"user_id"`
-	ListID             *uuid.UUID        `bson:"list_id,omitempty"`
-	Title              string            `bson:"title"`
-	Description        string            `bson:"description"`
-	DueAt              time.Time         `bson:"due_at"`
-	Timezone           string            `bson:"timezone"`
-	Status             string            `bson:"status"`
-	Priority           string            `bson:"priority"`
-	Pinned             bool              `bson:"pinned"`
-	TagIDs             []uuid.UUID       `bson:"tag_ids,omitempty"`
-	RecurrenceRule     string            `bson:"recurrence_rule,omitempty"`
-	SeriesID           *uuid.UUID        `bson:"series_id,omitempty"`
-	RecurrenceUntil    *time.Time        `bson:"recurrence_until,omitempty"`
-	ChannelOverrides   map[string]bool   `bson:"channel_overrides,omitempty"`
-	RequireAllSubtasks bool              `bson:"require_all_subtasks"`
-	AttachmentURL      string            `bson:"attachment_url,omitempty"`
-	AssigneeID         *uuid.UUID        `bson:"assignee_id,omitempty"`
-	GroupID            *uuid.UUID        `bson:"group_id,omitempty"`
-	SnoozedUntil       *time.Time        `bson:"snoozed_until,omitempty"`
-	PausedAt           *time.Time        `bson:"paused_at,omitempty"`
-	ResumeAt           *time.Time        `bson:"resume_at,omitempty"`
-	CompletedAt        *time.Time        `bson:"completed_at,omitempty"`
-	CreatedAt          time.Time         `bson:"created_at"`
-	UpdatedAt          time.Time         `bson:"updated_at"`
+	ID                 uuid.UUID       `bson:"_id"`
+	UserID             uuid.UUID       `bson:"user_id"`
+	ListID             *uuid.UUID      `bson:"list_id,omitempty"`
+	MailWordingID      *uuid.UUID      `bson:"mail_wording_id,omitempty"`
+	Title              string          `bson:"title"`
+	Description        string          `bson:"description"`
+	DueAt              time.Time       `bson:"due_at"`
+	Timezone           string          `bson:"timezone"`
+	Status             string          `bson:"status"`
+	Priority           string          `bson:"priority"`
+	Pinned             bool            `bson:"pinned"`
+	TagIDs             []uuid.UUID     `bson:"tag_ids,omitempty"`
+	RecurrenceRule     string          `bson:"recurrence_rule,omitempty"`
+	SeriesID           *uuid.UUID      `bson:"series_id,omitempty"`
+	RecurrenceUntil    *time.Time      `bson:"recurrence_until,omitempty"`
+	ChannelOverrides   map[string]bool `bson:"channel_overrides,omitempty"`
+	RequireAllSubtasks bool            `bson:"require_all_subtasks"`
+	AttachmentURL      string          `bson:"attachment_url,omitempty"`
+	AssigneeID         *uuid.UUID      `bson:"assignee_id,omitempty"`
+	GroupID            *uuid.UUID      `bson:"group_id,omitempty"`
+	SnoozedUntil       *time.Time      `bson:"snoozed_until,omitempty"`
+	PausedAt           *time.Time      `bson:"paused_at,omitempty"`
+	ResumeAt           *time.Time      `bson:"resume_at,omitempty"`
+	CompletedAt        *time.Time      `bson:"completed_at,omitempty"`
+	CreatedAt          time.Time       `bson:"created_at"`
+	UpdatedAt          time.Time       `bson:"updated_at"`
 }
 
 func reminderFromDoc(doc reminderDoc) reminder.Reminder {
@@ -54,6 +55,7 @@ func reminderFromDoc(doc reminderDoc) reminder.Reminder {
 		ID:                 doc.ID,
 		UserID:             doc.UserID,
 		ListID:             doc.ListID,
+		MailWordingID:      doc.MailWordingID,
 		Title:              doc.Title,
 		Description:        doc.Description,
 		DueAt:              doc.DueAt,
@@ -108,6 +110,7 @@ func (db *DB) CreateReminder(ctx context.Context, userID uuid.UUID, in reminder.
 		ID:                 uuid.New(),
 		UserID:             userID,
 		ListID:             in.ListID,
+		MailWordingID:      in.MailWordingID,
 		Title:              title,
 		Description:        strings.TrimSpace(in.Description),
 		DueAt:              in.DueAt.UTC(),
@@ -252,6 +255,12 @@ func (db *DB) UpdateReminder(ctx context.Context, userID, id uuid.UUID, in remin
 	if in.ListID != nil {
 		listID = in.ListID
 	}
+	mailWordingID := cur.MailWordingID
+	if in.ClearMailWording {
+		mailWordingID = nil
+	} else if in.MailWordingID != nil {
+		mailWordingID = in.MailWordingID
+	}
 	tagIDs := cur.TagIDs
 	if in.TagIDs != nil {
 		tagIDs = *in.TagIDs
@@ -295,24 +304,25 @@ func (db *DB) UpdateReminder(ctx context.Context, userID, id uuid.UUID, in remin
 	}
 
 	set := bson.M{
-		"title":                 title,
-		"description":           desc,
-		"due_at":                dueAt,
-		"timezone":              tz,
-		"priority":              priority,
-		"status":                status,
-		"list_id":               listID,
-		"tag_ids":               tagIDs,
-		"recurrence_rule":       recurrenceRule,
-		"series_id":             seriesID,
-		"recurrence_until":      recurrenceUntil,
-		"channel_overrides":     channelOverrides,
-		"require_all_subtasks":  requireAllSubtasks,
-		"attachment_url":        attachmentURL,
-		"assignee_id":           assigneeID,
-		"group_id":              groupID,
-		"completed_at":          completedAt,
-		"updated_at":            time.Now().UTC(),
+		"title":                title,
+		"description":          desc,
+		"due_at":               dueAt,
+		"timezone":             tz,
+		"priority":             priority,
+		"status":               status,
+		"list_id":              listID,
+		"mail_wording_id":      mailWordingID,
+		"tag_ids":              tagIDs,
+		"recurrence_rule":      recurrenceRule,
+		"series_id":            seriesID,
+		"recurrence_until":     recurrenceUntil,
+		"channel_overrides":    channelOverrides,
+		"require_all_subtasks": requireAllSubtasks,
+		"attachment_url":       attachmentURL,
+		"assignee_id":          assigneeID,
+		"group_id":             groupID,
+		"completed_at":         completedAt,
+		"updated_at":           time.Now().UTC(),
 	}
 	res, err := db.collection("reminders").UpdateOne(ctx, bson.M{"_id": id, "user_id": userID}, bson.M{"$set": set})
 	if err != nil {

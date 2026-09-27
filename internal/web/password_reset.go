@@ -25,7 +25,7 @@ func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 	if token != "" {
 		delivery, err := s.effectiveDelivery(r)
 		if err == nil && notify.ChannelAvailability(delivery)[storage.ChannelEmail] {
-			link := publicBaseURL(r) + "/#/reset-password?token=" + token
+			link := s.appBaseURL(r) + "/#/reset-password?token=" + token
 			_ = notify.SendEmail(r.Context(), delivery, strings.TrimSpace(strings.ToLower(body.Email)),
 				"Reset your Day Remind password",
 				"<p>Click to reset your password:</p><p><a href=\""+link+"\">"+link+"</a></p><p>Link expires in 1 hour.</p>")

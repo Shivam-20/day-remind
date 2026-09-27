@@ -21,12 +21,12 @@ const (
 
 // PreviewResult summarizes an import without writing data.
 type PreviewResult struct {
-	RemindersNew  int      `json:"reminders_new"`
-	RemindersSkip int      `json:"reminders_skip"`
-	RemindersUpdate int    `json:"reminders_update"`
-	Lists         int      `json:"lists"`
-	Tags          int      `json:"tags"`
-	Warnings      []string `json:"warnings"`
+	RemindersNew    int      `json:"reminders_new"`
+	RemindersSkip   int      `json:"reminders_skip"`
+	RemindersUpdate int      `json:"reminders_update"`
+	Lists           int      `json:"lists"`
+	Tags            int      `json:"tags"`
+	Warnings        []string `json:"warnings"`
 }
 
 // ImportResult summarizes a completed import.

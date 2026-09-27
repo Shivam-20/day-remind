@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -31,7 +32,7 @@ func (s *Server) Handler() http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(60 * time.Second))
+	r.Use(requestTimeout)
 
 	r.Get("/api/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -42,6 +43,7 @@ func (s *Server) Handler() http.Handler {
 	r.Post("/api/auth/logout", s.handleLogout)
 	r.Post("/api/auth/forgot-password", s.handleForgotPassword)
 	r.Post("/api/auth/reset-password", s.handleResetPassword)
+	r.Post("/api/auth/verify-email", s.handleVerifyEmail)
 	r.Post("/api/webhooks/telegram", s.handleTelegramWebhook)
 	r.Post("/api/webhooks/email-ingest", s.handleEmailIngest)
 	r.Post("/api/webhooks/email-ingest/{token}", s.handleEmailIngest)
@@ -49,6 +51,7 @@ func (s *Server) Handler() http.Handler {
 	r.Group(func(pr chi.Router) {
 		pr.Use(s.requireSession)
 		pr.Get("/api/me", s.handleMe)
+		pr.Post("/api/auth/verify-email/resend", s.handleResendVerification)
 		pr.Post("/api/me/notifications/pause", s.handlePauseNotifications)
 		pr.Post("/api/me/notifications/resume", s.handleResumeNotifications)
 		pr.Get("/api/me/notification-channels", s.handleGetNotificationChannels)
@@ -77,6 +80,20 @@ func (s *Server) Handler() http.Handler {
 		pr.Post("/api/tags", s.handleCreateTag)
 		pr.Patch("/api/tags/{id}", s.handleUpdateTag)
 		pr.Delete("/api/tags/{id}", s.handleDeleteTag)
+
+		pr.Get("/api/me/mail-wordings", s.handleListMailWordings)
+		pr.Post("/api/me/mail-wordings", s.handleCreateMailWording)
+		pr.Post("/api/me/mail-wordings/preview", s.handlePreviewMailWording)
+		pr.Post("/api/me/mail-wordings/generate", s.handleGenerateMailWording)
+		pr.Put("/api/me/mail-wordings/{id}", s.handleUpdateMailWording)
+		pr.Delete("/api/me/mail-wordings/{id}", s.handleDeleteMailWording)
+		pr.Post("/api/me/mail-wordings/{id}/use", s.handleUseMailWording)
+		pr.Get("/api/me/mail-templates", s.handleListMailWordings)
+		pr.Post("/api/me/mail-templates", s.handleCreateMailWording)
+		pr.Put("/api/me/mail-templates/{id}", s.handleUpdateMailWording)
+		pr.Delete("/api/me/mail-templates/{id}", s.handleDeleteMailWording)
+		pr.Post("/api/me/mail-templates/{id}/use", s.handleUseMailWording)
+		pr.Post("/api/me/templates/preview", s.handlePreviewMailWording)
 
 		pr.Get("/api/templates", s.handleListTemplates)
 		pr.Post("/api/templates", s.handleCreateTemplate)
@@ -166,6 +183,8 @@ func (s *Server) Handler() http.Handler {
 		ar.Get("/api/admin/settings/delivery", s.handleAdminGetDeliverySettings)
 		ar.Patch("/api/admin/settings/delivery", s.handleAdminUpdateDeliverySettings)
 		ar.Post("/api/admin/settings/delivery/test", s.handleAdminTestDelivery)
+		ar.Get("/api/admin/settings/openrouter/models", s.handleAdminListOpenRouterModels)
+		ar.Post("/api/admin/settings/ai/test", s.handleAdminTestAI)
 
 		ar.Get("/api/admin/users", s.handleAdminListUsers)
 		ar.Post("/api/admin/users", s.handleAdminCreateUser)
@@ -222,6 +241,23 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 	_, _ = w.Write(b)
+}
+
+// requestTimeout cancels the request context. AI routes get longer than the
+// default because model catalogs and wording generation often exceed 60s.
+func requestTimeout(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		limit := 60 * time.Second
+		path := r.URL.Path
+		if strings.Contains(path, "/mail-wordings/generate") ||
+			strings.Contains(path, "/settings/ai/test") ||
+			strings.Contains(path, "/openrouter/models") {
+			limit = 3 * time.Minute
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), limit)
+		defer cancel()
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 func (s *Server) ListenAndServe() error {
