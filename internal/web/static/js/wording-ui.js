@@ -15,9 +15,11 @@ function renderMessageWording() {
     const cards = templates.length
       ? `<div class="template-grid">${templates.map((t) => `
           <article class="card template-card">
-            <h3>${escapeHTML(t.name)}${t.active ? ' <span class="badge">In use</span>' : ''}</h3>
-            <p class="page-sub">${escapeHTML(t.email_subject || 'Default subject')}</p>
-            <div class="settings-actions">
+            <div class="template-card-body">
+              <h3>${escapeHTML(t.name)}${t.active ? ' <span class="badge">In use</span>' : ''}</h3>
+              <p class="template-subject">${escapeHTML(wordingSubjectPreview(t.email_subject))}</p>
+            </div>
+            <div class="settings-actions template-card-actions">
               <button class="btn btn-sm btn-primary" data-use-wording="${t.id}"${t.active ? ' disabled' : ''}>Use</button>
               <button class="btn btn-sm" data-view-wording="${t.id}">View as mail</button>
               <button class="btn btn-sm" data-edit-wording="${t.id}">Edit</button>

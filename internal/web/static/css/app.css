@@ -945,11 +945,46 @@ td:has(.table-actions) {
 }
 .template-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.template-card {
+  display: flex;
+  flex-direction: column;
   gap: 12px;
 }
-.template-card h3 { margin: 0 0 8px; font-size: 1rem; }
-.template-card .page-sub { margin: 0 0 12px; }
+.template-card-body { min-width: 0; }
+.template-card h3 { margin: 0 0 6px; font-size: 1rem; }
+.template-subject {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 0.9rem;
+  line-height: 1.45;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.template-card-actions {
+  margin-top: 0;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+@media (min-width: 640px) {
+  .template-card {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .template-card-body { flex: 1; }
+  .template-card-actions {
+    flex-shrink: 0;
+    justify-content: flex-end;
+  }
+}
 
 .mail-preview-card { margin-top: 16px; }
 .mail-preview-inbox {

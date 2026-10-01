@@ -38,6 +38,35 @@ function mailPreviewDocument(html) {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:12px;background:transparent;}</style></head><body>${trimmed}</body></html>`;
 }
 
+/** Plain-text card subtitle from a Go text/template subject (no server round-trip). */
+function wordingSubjectPreview(subject) {
+  let s = String(subject || '').trim();
+  if (!s) return 'Default subject';
+
+  const ifElse = /\{\{if\s+[^}]+\}\}([\s\S]*?)\{\{else\}\}([\s\S]*?)\{\{end\}\}/;
+  const ifOnly = /\{\{if\s+[^}]+\}\}([\s\S]*?)\{\{end\}\}/;
+  for (let i = 0; i < 20; i++) {
+    const m = ifElse.exec(s);
+    if (m) {
+      const a = m[1].trim();
+      const b = m[2].trim();
+      s = s.slice(0, m.index) + `${a} / ${b}` + s.slice(m.index + m[0].length);
+      continue;
+    }
+    const m2 = ifOnly.exec(s);
+    if (m2) {
+      s = s.slice(0, m2.index) + m2[1].trim() + s.slice(m2.index + m2[0].length);
+      continue;
+    }
+    break;
+  }
+
+  s = s.replace(/\{\{\.([^}]+)\}\}/g, (_, name) => name.trim());
+  s = s.replace(/\{\{[^}]+\}\}/g, '');
+  s = s.replace(/\s+/g, ' ').trim();
+  return s || 'Default subject';
+}
+
 function mailPreviewAsInboxHTML(res) {
   return ['due', 'advance'].map((kind) => {
     const p = res[kind] || {};
