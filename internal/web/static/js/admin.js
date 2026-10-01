@@ -314,7 +314,7 @@ async function renderAdminReminders() {
       `<option value="${u.id}"${adminState.reminderUserId === u.id ? ' selected' : ''}>${escapeHTML(u.email)}</option>`
     ).join('');
     const statusChips = ['all', 'scheduled', 'paused', 'done', 'cancelled'].map((f) =>
-      `<button class="filter-chip ${adminState.reminderStatus === f ? 'active' : ''}" data-status="${f}">${f}</button>`
+      `<button class="filter-chip ${adminState.reminderStatus === f ? 'active' : ''}" data-status="${f}">${reminderFilterLabel(f)}</button>`
     ).join('');
 
     const rows = adminState.reminders.map((item) => {

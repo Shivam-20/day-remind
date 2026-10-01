@@ -335,7 +335,7 @@ async function renderReminders() {
   const status = state.filter === 'all' ? '' : state.filter;
   await loadReminders(status ? `?status=${status}` : '');
   const chips = ['all', 'scheduled', 'paused', 'done'].map((f) =>
-    `<button class="filter-chip ${state.filter === f ? 'active' : ''}" data-filter="${f}">${f}</button>`
+    `<button class="filter-chip ${state.filter === f ? 'active' : ''}" data-filter="${f}">${reminderFilterLabel(f)}</button>`
   ).join('');
   const main = `
     <h1 class="page-title">All reminders</h1>

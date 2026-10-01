@@ -616,7 +616,7 @@ async function renderRemindersEnhanced() {
   await loadListsAndTags().catch(() => {});
 
   const chips = ['all', 'scheduled', 'paused', 'done'].map((f) =>
-    `<button class="filter-chip ${state.filter === f ? 'active' : ''}" data-filter="${f}">${f}</button>`
+    `<button class="filter-chip ${state.filter === f ? 'active' : ''}" data-filter="${f}">${reminderFilterLabel(f)}</button>`
   ).join('');
   const listOpts = featureState.lists.map((l) =>
     `<option value="${l.id}" ${featureState.listFilter === l.id ? 'selected' : ''}>${escapeHTML(l.name)}</option>`

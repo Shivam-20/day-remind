@@ -61,6 +61,12 @@ function statusBadge(item) {
   return '';
 }
 
+function reminderFilterLabel(value) {
+  const s = String(value || '');
+  if (!s) return '';
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 function reminderCardHTML(item, actionsHTML) {
   const paused = item.status === 'paused' ? ' is-paused' : '';
   return `
