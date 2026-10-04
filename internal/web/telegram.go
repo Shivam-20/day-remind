@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"log"
@@ -69,20 +70,34 @@ func (s *Server) handleTelegramWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "telegram not configured")
 		return
 	}
-	// When using the gateway, inbound updates arrive as gateway webhook pushes.
-	// The gateway forwards X-Telegram-Bot-Api-Secret-Token (if configured) so the
-	// existing secret check still applies.
-	if !notify.IsGateway(delivery) {
-		if secret := strings.TrimSpace(s.cfg.TelegramWebhookSecret); secret != "" {
-			if r.Header.Get("X-Telegram-Bot-Api-Secret-Token") != secret {
-				writeError(w, http.StatusUnauthorized, "invalid secret")
-				return
-			}
+	// This route is public (not SSO-gated) and an update's chat ID decides whose
+	// reminders a command touches, so only accept pushes when a webhook
+	// transport is actually configured, and always require the shared secret.
+	// In gateway mode the gateway forwards X-Telegram-Bot-Api-Secret-Token.
+	if notify.IsGateway(delivery) {
+		mode := strings.TrimSpace(delivery.TelegramGatewayInboundMode)
+		if mode != "webhook" && mode != "both" {
+			writeError(w, http.StatusNotFound, "telegram webhook disabled")
+			return
+		}
+	} else {
+		if s.cfg.TelegramUpdateMode != "webhook" {
+			writeError(w, http.StatusNotFound, "telegram webhook disabled")
+			return
 		}
 		if delivery.TelegramBotToken == "" {
 			writeError(w, http.StatusServiceUnavailable, "telegram not configured")
 			return
 		}
+	}
+	secret := strings.TrimSpace(s.cfg.TelegramWebhookSecret)
+	if secret == "" {
+		writeError(w, http.StatusServiceUnavailable, "telegram webhook secret not configured")
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Telegram-Bot-Api-Secret-Token")), []byte(secret)) != 1 {
+		writeError(w, http.StatusUnauthorized, "invalid secret")
+		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
@@ -177,6 +192,11 @@ func (s *Server) bootstrapTelegramWebhook(ctx context.Context) {
 	base := strings.TrimRight(strings.TrimSpace(s.cfg.WebhookBaseURL), "/")
 	if !strings.HasPrefix(base, "https://") {
 		log.Printf("telegram: webhook mode needs an https WEBHOOK_BASE_URL; falling back to polling")
+		s.runTelegramPolling(ctx)
+		return
+	}
+	if strings.TrimSpace(s.cfg.TelegramWebhookSecret) == "" {
+		log.Printf("telegram: webhook mode needs TELEGRAM_WEBHOOK_SECRET; falling back to polling")
 		s.runTelegramPolling(ctx)
 		return
 	}

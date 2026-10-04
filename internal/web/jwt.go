@@ -1,15 +1,36 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/shivam-20/day-remind/internal/storage"
 )
 
-// gatewayClaims are the claims the home gateway signs into the auth_token cookie.
+// ssoAdminRoles are the Launchpad roles that map to day-remind admin.
+var ssoAdminRoles = map[string]bool{"owner": true, "admin": true}
+
+// ungatedPathPrefixes are the paths the home Caddy proxies WITHOUT
+// forward_auth (/remind/api/v1/*, /remind/api/webhooks/*, /remind/api/health).
+// X-Auth-* headers on these requests come straight from the client, so they
+// must never be trusted as identity.
+var ungatedPathPrefixes = []string{"/api/v1/", "/api/webhooks/", "/api/health"}
+
+func isUngatedPath(path string) bool {
+	for _, p := range ungatedPathPrefixes {
+		if strings.HasPrefix(path, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// gatewayClaims are the claims the Launchpad (home) gateway signs into the
+// auth_token cookie and exposes as X-Auth-* headers.
 type gatewayClaims struct {
 	Email string `json:"email"`
 	Name  string `json:"name"`
@@ -17,7 +38,7 @@ type gatewayClaims struct {
 	jwt.RegisteredClaims
 }
 
-// verifyGatewayJWT validates the shared auth_token JWT issued by the home
+// verifyGatewayJWT validates the shared auth_token JWT issued by the Launchpad
 // gateway. The same AUTH_JWT_SECRET must be configured on the home service.
 func verifyGatewayJWT(token, secret, issuer string) (*gatewayClaims, error) {
 	if token == "" || secret == "" {
@@ -36,6 +57,41 @@ func verifyGatewayJWT(token, secret, issuer string) (*gatewayClaims, error) {
 	return claims, nil
 }
 
+// resolveGatewayUser finds (or provisions) the day-remind user for an SSO
+// identity, and keeps the admin flag in sync with the SSO role so a Launchpad
+// "owner"/"admin" grants day-remind admin without a restart.
+func (s *Server) resolveGatewayUser(ctx context.Context, email, name, role string) (uuid.UUID, bool) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return uuid.Nil, false
+	}
+	user, err := s.db.GetUserByEmail(ctx, email)
+	if err == storage.ErrNotFound {
+		created, cerr := s.db.CreateUser(ctx, email, "", name, "")
+		if cerr != nil {
+			// A concurrent request may have created the user already — retry.
+			if u2, gerr := s.db.GetUserByEmail(ctx, email); gerr == nil {
+				user = u2
+			} else {
+				return uuid.Nil, false
+			}
+		} else {
+			user = created
+		}
+	} else if err != nil {
+		return uuid.Nil, false
+	}
+	// Mirror the Launchpad role both ways so revoking admin there revokes it
+	// here too. An empty role carries no information, so leave the flag as is.
+	// SetUserAdmin never demotes hardcoded / ADMIN_EMAILS admins.
+	if role = strings.ToLower(strings.TrimSpace(role)); role != "" {
+		if wantAdmin := ssoAdminRoles[role]; wantAdmin != user.IsAdmin {
+			_ = s.db.SetUserAdmin(ctx, user.ID, wantAdmin)
+		}
+	}
+	return user.ID, true
+}
+
 // userFromGateway resolves a day-remind identity from the gateway auth_token
 // cookie. Existing day-remind users are matched by email; if none exists, a
 // gateway-only account (no password hash) is provisioned on the fly so the
@@ -49,19 +105,20 @@ func (s *Server) userFromGateway(r *http.Request) (uuid.UUID, bool) {
 	if err != nil {
 		return uuid.Nil, false
 	}
-	user, err := s.db.GetUserByEmail(r.Context(), claims.Email)
-	if err == nil {
-		return user.ID, true
+	return s.resolveGatewayUser(r.Context(), claims.Email, claims.Name, claims.Role)
+}
+
+// userFromHeaders resolves identity from the X-Auth-* headers that Caddy's
+// forward_auth copies from the Launchpad /auth/verify response. Only trusted
+// when TRUST_AUTH_HEADERS is enabled (the app is only reachable through Caddy,
+// which overwrites these headers on a successful check).
+func (s *Server) userFromHeaders(r *http.Request) (uuid.UUID, bool) {
+	if !s.cfg.TrustAuthHeaders || isUngatedPath(r.URL.Path) {
+		return uuid.Nil, false
 	}
-	if err == storage.ErrNotFound {
-		u, err := s.db.CreateUser(r.Context(), claims.Email, "", claims.Name, "")
-		if err == nil {
-			return u.ID, true
-		}
-		// A concurrent request may have created the user already — retry.
-		if u2, err := s.db.GetUserByEmail(r.Context(), claims.Email); err == nil {
-			return u2.ID, true
-		}
+	email := strings.TrimSpace(r.Header.Get("X-Auth-Email"))
+	if email == "" {
+		return uuid.Nil, false
 	}
-	return uuid.Nil, false
+	return s.resolveGatewayUser(r.Context(), email, r.Header.Get("X-Auth-Name"), r.Header.Get("X-Auth-Role"))
 }

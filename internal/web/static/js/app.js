@@ -79,6 +79,7 @@ function renderAuth(signup) {
           ${signup ? `<div class="field"><label for="name">Name</label><input id="name" name="name" autocomplete="name"></div>` : ''}
           <div class="field"><label for="email">Email</label><input id="email" name="email" type="email" required autocomplete="email"></div>
           <div class="field"><label for="password">Password</label><input id="password" name="password" type="password" required minlength="8" autocomplete="${signup ? 'new-password' : 'current-password'}"></div>
+          ${signup ? '' : `<div class="field" id="totp-field" hidden><label for="totp_code">Two-factor code</label><input id="totp_code" name="totp_code" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="one-time-code"></div>`}
           <button class="btn btn-primary" type="submit" style="width:100%">${signup ? 'Create account' : 'Sign in'}</button>
         </form>
         <p style="margin-top:16px;text-align:center;font-size:.9rem;color:var(--text-2)">
@@ -117,6 +118,7 @@ function renderAuth(signup) {
         state.user = await API.post('/api/auth/login', {
           email: fd.get('email'),
           password: fd.get('password'),
+          totp_code: fd.get('totp_code') || '',
         });
       }
       location.hash = '#/today';
@@ -125,6 +127,12 @@ function renderAuth(signup) {
         showToast('Account created — check your email for a verification link');
       }
     } catch (err) {
+      if (!signup && err.data?.totp_required) {
+        const field = document.getElementById('totp-field');
+        field.hidden = false;
+        document.getElementById('totp_code').required = true;
+        document.getElementById('totp_code').focus();
+      }
       showToast(err.message, 'error');
     }
   };

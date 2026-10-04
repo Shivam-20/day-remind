@@ -44,6 +44,7 @@ type Config struct {
 	AuthJWTSecret              string
 	GatewayCookie              string
 	JWTIssuer                  string
+	TrustAuthHeaders           bool
 }
 
 func Load() (Config, error) {
@@ -132,6 +133,7 @@ func Load() (Config, error) {
 		AuthJWTSecret:              strings.TrimSpace(os.Getenv("AUTH_JWT_SECRET")),
 		GatewayCookie:              gatewayCookie,
 		JWTIssuer:                  jwtIssuer,
+		TrustAuthHeaders:           strings.EqualFold(strings.TrimSpace(os.Getenv("TRUST_AUTH_HEADERS")), "true"),
 	}, nil
 }
 

@@ -268,7 +268,7 @@ docs/plans/                 # Implementation roadmap
 | `SMTP_TLS` | no | `starttls` (default) \| `ssl` \| `none` |
 | `TELEGRAM_BOT_TOKEN` | no | Telegram bot token (admin can also set in DB) |
 | `TELEGRAM_UPDATE_MODE` | no | `polling` (default, no public URL needed) \| `webhook` \| `off`. Webhook mode requires an `https` `WEBHOOK_BASE_URL`. Ignored for transport when `TELEGRAM_GATEWAY_URL` is set |
-| `TELEGRAM_WEBHOOK_SECRET` | no | Optional `secret_token` for webhook mode; incoming updates rejected on mismatch |
+| `TELEGRAM_WEBHOOK_SECRET` | webhook mode | `secret_token` for webhook mode (direct or gateway push). **Required** — `/api/webhooks/telegram` rejects every update when unset or mismatched, and returns 404 unless a webhook transport is configured |
 | `TELEGRAM_GATEWAY_URL` | no | Telegram-gateway base URL (prod `http://161.118.181.5/tg`). When set, day-remind routes all Telegram traffic through the gateway |
 | `TELEGRAM_GATEWAY_API_TOKEN` | no | Bearer API token (`tgw_…`) issued by the gateway for the day-remind service |
 | `TELEGRAM_GATEWAY_INBOUND_MODE` | no | How day-remind receives updates from the gateway: `poll` (default) \| `webhook` \| `both` |
@@ -389,7 +389,7 @@ All JSON. Errors: `{"error":"message"}` with appropriate status code.
 |--------|------|-------|
 | GET | `/api/health` | `{"status":"ok"}` |
 | POST | `/api/auth/signup` | body: email, password, display_name, timezone → sets cookie |
-| POST | `/api/auth/login` | body: email, password → sets cookie |
+| POST | `/api/auth/login` | body: email, password, `totp_code` (required when 2FA is on; 401 `{totp_required:true}` otherwise) → sets cookie |
 | POST | `/api/auth/logout` | Clears cookie |
 | POST | `/api/auth/forgot-password` | body: email — sends reset link if email delivery configured |
 | POST | `/api/auth/reset-password` | body: token, password |

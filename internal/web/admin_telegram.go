@@ -154,6 +154,10 @@ func (s *Server) handleAdminRegisterTelegramWebhook(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusBadRequest, "telegram webhooks require an https public URL")
 		return
 	}
+	if strings.TrimSpace(s.cfg.TelegramWebhookSecret) == "" {
+		writeError(w, http.StatusBadRequest, "telegram webhooks require TELEGRAM_WEBHOOK_SECRET")
+		return
+	}
 	if err := notify.SetTelegramWebhook(r.Context(), delivery, url, s.cfg.TelegramWebhookSecret); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

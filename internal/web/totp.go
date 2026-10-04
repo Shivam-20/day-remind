@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/shivam-20/day-remind/internal/auth"
+	"github.com/shivam-20/day-remind/internal/storage"
 )
 
 type totpEnableRequest struct {
@@ -18,6 +19,10 @@ func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	secret, err := s.db.BeginTOTPSetup(r.Context(), userID)
+	if err == storage.ErrTOTPAlreadyEnabled {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not save secret")
 		return

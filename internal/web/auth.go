@@ -22,6 +22,7 @@ type signupRequest struct {
 type loginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	TOTPCode string `json:"totp_code"`
 }
 
 func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
@@ -65,6 +66,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if !auth.CheckPassword(user.PasswordHash, body.Password) {
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	// Only reached after a correct password, so totp_required never reveals
+	// which accounts have 2FA to someone guessing emails.
+	switch err := s.db.CheckLoginTOTP(r.Context(), user.ID, body.TOTPCode); err {
+	case nil:
+	case storage.ErrTOTPRequired, storage.ErrTOTPInvalid:
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": err.Error(), "totp_required": true})
+		return
+	default:
+		writeError(w, http.StatusInternalServerError, "could not verify two-factor code")
 		return
 	}
 	if err := s.setSession(w, r, user.ID); err != nil {

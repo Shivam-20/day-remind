@@ -27,8 +27,16 @@ func (db *DB) EnsureAdminEmails(ctx context.Context) error {
 	for email := range db.adminEmails {
 		emails = append(emails, email)
 	}
+	// Only promote accounts whose ownership of the email is proven: a verified
+	// email, or a passwordless account provisioned from a Launchpad SSO
+	// identity. Otherwise anyone who registers an admin address first would be
+	// promoted on the next restart.
 	_, err := db.collection("users").UpdateMany(ctx, bson.M{
 		"email": bson.M{"$in": emails},
+		"$or": bson.A{
+			bson.M{"email_verified_at": bson.M{"$ne": nil}},
+			bson.M{"password_hash": ""},
+		},
 	}, bson.M{
 		"$set": bson.M{
 			"is_admin":   true,
@@ -184,6 +192,30 @@ func (db *DB) UpdateUserAdmin(ctx context.Context, id uuid.UUID, in AdminUserUpd
 	}
 
 	return db.GetUserByID(ctx, id)
+}
+
+// SetUserAdmin promotes or demotes a user. Used by SSO role mapping so a
+// Launchpad "owner"/"admin" grants day-remind admin without a restart.
+// Hardcoded and ADMIN_EMAILS admins are never demoted (they would only be
+// re-promoted on the next restart).
+func (db *DB) SetUserAdmin(ctx context.Context, id uuid.UUID, isAdmin bool) error {
+	if !isAdmin {
+		current, err := db.GetUserByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		if isHardcodedAdmin(current.Email) || db.isConfiguredAdmin(current.Email) {
+			return nil
+		}
+	}
+	res, err := db.collection("users").UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": bson.M{"is_admin": isAdmin}})
+	if err != nil {
+		return err
+	}
+	if res.MatchedCount == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (db *DB) DeleteUser(ctx context.Context, id uuid.UUID) error {

@@ -29,6 +29,12 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
+		// Fallback: Caddy forward_auth identity headers (Launchpad SSO).
+		if userID, ok := s.userFromHeaders(r); ok {
+			ctx := context.WithValue(r.Context(), userIDKey, userID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 	})
 }
