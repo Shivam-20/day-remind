@@ -127,3 +127,25 @@ func (s *Server) userFromHeaders(r *http.Request) (uuid.UUID, bool) {
 	}
 	return s.resolveGatewayUser(r.Context(), email, r.Header.Get("X-Auth-Name"), r.Header.Get("X-Auth-Role"))
 }
+
+// syncAdminFromHeaders mirrors the live Launchpad role onto a user signed in
+// with day-remind's own session, so a demotion at the IdP takes effect here
+// without waiting for that session to expire. Only applies when the trusted
+// SSO identity is the same person (matching email).
+func (s *Server) syncAdminFromHeaders(r *http.Request, userID uuid.UUID) {
+	if !s.cfg.TrustAuthHeaders || isUngatedPath(r.URL.Path) {
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Email")))
+	role := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Role")))
+	if email == "" || role == "" {
+		return
+	}
+	user, err := s.db.GetUserByID(r.Context(), userID)
+	if err != nil || strings.ToLower(user.Email) != email {
+		return
+	}
+	if wantAdmin := ssoAdminRoles[role]; wantAdmin != user.IsAdmin {
+		_ = s.db.SetUserAdmin(r.Context(), user.ID, wantAdmin)
+	}
+}

@@ -506,6 +506,7 @@ Non-admins navigating to `#/admin` are redirected to `#/today`.
 10. **Scope:** Minimal diffs; match existing naming and patterns; avoid over-abstraction.
 11. **Public deploy:** Use OCI reverse tunnel + `~/apps/caddy` path `/remind` only (see **Production deploy** above). Never invent a second public entry for this app without user approval.
 12. **Base path:** Keep relative static URLs + `API.url()`; never reintroduce root-absolute `/static/...` asset tags.
+13. **Auth order (`requireSession`):** `dr_session` → Caddy `X-Auth-*` headers → Launchpad `auth_token` JWT. Headers come before the JWT because they carry the **live** role from `/auth/verify`; the JWT `role` claim is frozen at sign-in. On the `dr_session` path, `syncAdminFromHeaders` (`internal/web/jwt.go`) mirrors `X-Auth-Role` onto `is_admin` when the SSO email matches the session user. Never authorize on the JWT role claim alone.
 
 ---
 

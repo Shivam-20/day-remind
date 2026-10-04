@@ -18,19 +18,22 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 		// Primary path: day-remind's own session cookie (opaque token in Mongo).
 		if token := sessionTokenFromRequest(r); token != "" {
 			if userID, err := s.db.GetSessionUserID(r.Context(), token); err == nil {
+				s.syncAdminFromHeaders(r, userID)
 				ctx := context.WithValue(r.Context(), userIDKey, userID)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
 		}
-		// Fallback: shared gateway JWT (auth_token cookie) from the home page.
-		if userID, ok := s.userFromGateway(r); ok {
+		// Fallback: Caddy forward_auth identity headers (Launchpad SSO). Checked
+		// before the JWT because /auth/verify reads the live role from the IdP,
+		// whereas the cookie's role claim is frozen at sign-in.
+		if userID, ok := s.userFromHeaders(r); ok {
 			ctx := context.WithValue(r.Context(), userIDKey, userID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
-		// Fallback: Caddy forward_auth identity headers (Launchpad SSO).
-		if userID, ok := s.userFromHeaders(r); ok {
+		// Fallback: shared gateway JWT (auth_token cookie) from the home page.
+		if userID, ok := s.userFromGateway(r); ok {
 			ctx := context.WithValue(r.Context(), userIDKey, userID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
