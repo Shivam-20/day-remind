@@ -13,6 +13,7 @@ import (
 	"github.com/shivam-20/day-remind/internal/notify"
 	"github.com/shivam-20/day-remind/internal/reminder"
 	"github.com/shivam-20/day-remind/internal/storage"
+	"github.com/shivam-20/day-remind/internal/webhook"
 )
 
 type Scheduler struct {
@@ -21,6 +22,8 @@ type Scheduler struct {
 	interval       time.Duration
 	lastDigestHour int
 	lastDigestDay  int
+	// Webhooks receives reminder.fired; nil disables user webhooks.
+	Webhooks *webhook.Dispatcher
 }
 
 func New(db *storage.DB, cfg config.Config) *Scheduler {
@@ -136,6 +139,10 @@ func (s *Scheduler) dispatchOccurrence(ctx context.Context, occ storage.Reminder
 	}
 	prefix := occurrencePrefix(occ)
 	s.deliverToChannels(ctx, item, state, deliveryCfg, item.DueAt, prefix, occurrenceDeliveryContext(occ))
+	if occ.Kind == storage.OccurrenceKindMain {
+		// Advance-offset warnings are not the due event itself.
+		s.Webhooks.EmitFired(ctx, item)
+	}
 	_ = s.db.MarkOccurrenceFired(ctx, occ.ID)
 }
 
@@ -154,6 +161,7 @@ func (s *Scheduler) dispatchReminder(ctx context.Context, item reminder.Reminder
 		return
 	}
 	s.deliverToChannels(ctx, item, state, deliveryCfg, item.DueAt, "🔔 Now:", deliveryContext{})
+	s.Webhooks.EmitFired(ctx, item)
 }
 
 // deliveryContext tells the mail wording when a send fires: an early warning

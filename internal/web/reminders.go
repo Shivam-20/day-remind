@@ -259,6 +259,7 @@ func (s *Server) handleDoneReminder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not update")
 		return
 	}
+	s.hooks.EmitDone(r.Context(), item)
 	scheduler.ScheduleNextRecurrenceIfNeeded(r.Context(), s.db, userID, id)
 	item, _ = s.db.GetReminder(r.Context(), userID, id)
 	writeJSON(w, http.StatusOK, reminderPayload(item))

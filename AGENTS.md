@@ -203,6 +203,7 @@ internal/
   reminder/reminder.go      # Reminder struct, CreateInput, UpdateInput, ListFilter
   reminder/snooze.go        # Snooze presets (+15m, +1h, +3h, tomorrow_9am)
   scheduler/runner.go       # Due-reminder poller, delivery dispatch + retries
+  webhook/                  # Outbound user webhooks: SSRF-safe client, HMAC signing, outbox dispatcher
   notify/                   # Email (Resend + SMTP in smtp.go) and Telegram send helpers
   storage/
     db.go                   # Open(), Close(), connection + admin email set
@@ -367,6 +368,26 @@ TTL index on `expires_at` auto-deletes expired sessions.
 }
 ```
 
+### `webhooks` / `webhook_deliveries` (outbound user webhooks)
+
+`webhooks`: user endpoint (`url`, `secret`, `events`, `enabled`, failure streak,
+`last_*`). `webhook_deliveries`: outbox row per event × endpoint, unique
+`idempotency_key` = `webhook_id:event:reminder_id:due_at`, status
+`pending|sending|retry|sent|failed`, 30-day TTL.
+
+- Events: `reminder.fired` (scheduler, when the due-time alert fires — not
+  advance offsets) and `reminder.done` (every done path: web, API v1, Telegram,
+  admin). Emit via `webhook.Dispatcher` (`nil` dispatcher = no-op).
+- Send: immediate attempt + `Dispatcher.Run` loop (15s) with lease-based claims;
+  5 attempts, backoff 1m/5m/30m/2h; endpoint auto-disabled after 5 deliveries
+  in a row exhaust retries.
+- Signing: `X-DayRemind-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<body>")>`,
+  plus `X-DayRemind-Event` / `X-DayRemind-Delivery`. Secret returned only on
+  create/rotate.
+- **SSRF guard — do not weaken:** URLs must be public; the dialer re-checks every
+  resolved IP (loopback, RFC1918, link-local/metadata, CGNAT/Tailscale, Docker
+  names blocked), no proxy, no redirects.
+
 ### `telegram_link_tokens` / `password_reset_tokens` / `email_verification_tokens`
 
 Short-lived tokens for bot linking, password reset emails, and new-signup email
@@ -416,6 +437,11 @@ These are user-facing auth endpoints. Agents must never generate, read back, log
 | POST | `/api/reminders` | body: title, description, due_at, timezone, priority |
 | GET/PATCH/DELETE | `/api/reminders/{id}` | User-scoped |
 | GET | `/api/reminders/{id}/deliveries` | Delivery log for one reminder |
+| GET/POST | `/api/webhooks` | List (+ supported `events`) / create `{url, events, secret?}` → returns `secret` once |
+| GET/PATCH/DELETE | `/api/webhooks/{id}` | PATCH `{url?, events?, enabled?, secret?, rotate_secret?}` |
+| POST | `/api/webhooks/{id}/test` | Synchronous signed `ping` → `{ok, status_code, error?}` |
+| GET | `/api/webhooks/{id}/deliveries` | Last 50 deliveries (30-day history) |
+| GET | `/api/me/2fa` | `{enabled}` — read-only; never call `/2fa/setup` just to read status |
 | POST | `/api/reminders/{id}/done` | Sets status done + completed_at |
 | POST | `/api/reminders/{id}/pause` | optional resume_at |
 | POST | `/api/reminders/{id}/resume` | |
@@ -557,7 +583,7 @@ If the UI shows only “Skip to content”, fix base-path asset/API rules and re
 - Sharing, groups, comments on reminders
 - Mail wording v2: rich template variables (user/list/tags/deep-link/today), polished built-in fallback email + starter presets, one-click Gemini template generation, editor with variable chips + live preview
 - Google OAuth connect + calendar/gmail sync scaffolding (requires Google credentials)
-- User webhooks, admin panel
+- User webhooks (signed, retried, SSRF-guarded; Settings → Account), admin panel
 - Email: Resend **or SMTP provider** (admin-selectable, env fallback); email verification for new signups (24h single-use links, admin toggle); base-path-aware reset/verify links
 - PWA service worker; UI routes in `app.js` + `features.js`
 

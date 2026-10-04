@@ -372,6 +372,7 @@ func (s *Server) handleAdminDoneReminder(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "could not update")
 		return
 	}
+	s.hooks.EmitDone(r.Context(), item)
 	writeJSON(w, http.StatusOK, adminReminderPayload(item))
 }
 

@@ -12,8 +12,8 @@ import (
 func TestUserFromHeadersIgnoresUngatedPaths(t *testing.T) {
 	s := &Server{cfg: config.Config{TrustAuthHeaders: true}}
 	for _, path := range []string{
-		"/api/webhooks/0b6c9c4e-1d7e-4a39-9f43-6f1b1c1d2e3f",
 		"/api/webhooks/telegram",
+		"/api/webhooks/email-ingest/sometoken",
 		"/api/v1/reminders",
 		"/api/health",
 	} {
@@ -28,12 +28,14 @@ func TestUserFromHeadersIgnoresUngatedPaths(t *testing.T) {
 
 func TestIsUngatedPath(t *testing.T) {
 	cases := map[string]bool{
-		"/api/webhooks/x":   true,
-		"/api/v1/reminders": true,
-		"/api/health":       true,
-		"/api/webhooks":     false, // gated by Caddy's /remind* handle
-		"/api/me":           false,
-		"/api/admin/stats":  false,
+		"/api/webhooks/telegram":     true,
+		"/api/webhooks/email-ingest": true,
+		"/api/webhooks/x":            false, // user CRUD, SSO-gated
+		"/api/v1/reminders":          true,
+		"/api/health":                true,
+		"/api/webhooks":              false, // gated by Caddy's /remind* handle
+		"/api/me":                    false,
+		"/api/admin/stats":           false,
 	}
 	for path, want := range cases {
 		if got := isUngatedPath(path); got != want {

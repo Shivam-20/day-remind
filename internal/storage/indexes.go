@@ -313,10 +313,39 @@ func ensureIndexes(ctx context.Context, db *mongo.Database) error {
 				},
 				{
 					Keys: bson.D{
+						{Key: "user_id", Value: 1},
 						{Key: "enabled", Value: 1},
 						{Key: "events", Value: 1},
 					},
 					Options: options.Index(),
+				},
+			},
+		},
+		{
+			collection: "webhook_deliveries",
+			indexes: []mongo.IndexModel{
+				{
+					Keys:    bson.D{{Key: "idempotency_key", Value: 1}},
+					Options: options.Index().SetUnique(true),
+				},
+				{
+					Keys: bson.D{
+						{Key: "status", Value: 1},
+						{Key: "next_attempt_at", Value: 1},
+					},
+					Options: options.Index(),
+				},
+				{
+					Keys: bson.D{
+						{Key: "webhook_id", Value: 1},
+						{Key: "created_at", Value: -1},
+					},
+					Options: options.Index(),
+				},
+				{
+					// Keep 30 days of delivery history.
+					Keys:    bson.D{{Key: "created_at", Value: 1}},
+					Options: options.Index().SetExpireAfterSeconds(30 * 24 * 3600),
 				},
 			},
 		},

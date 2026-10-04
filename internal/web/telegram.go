@@ -478,10 +478,12 @@ func (s *Server) telegramDone(ctx context.Context, delivery notify.DeliveryConfi
 		return
 	}
 	status := reminder.StatusDone
-	if _, err := s.db.UpdateReminder(ctx, user.ID, item.ID, reminder.UpdateInput{Status: &status}); err != nil {
+	done, err := s.db.UpdateReminder(ctx, user.ID, item.ID, reminder.UpdateInput{Status: &status})
+	if err != nil {
 		s.replyHTML(ctx, delivery, chatID, "Could not update reminder.")
 		return
 	}
+	s.hooks.EmitDone(ctx, done)
 	scheduler.ScheduleNextRecurrenceIfNeeded(ctx, s.db, user.ID, item.ID)
 	s.replyHTML(ctx, delivery, chatID, "Marked done: "+notify.EscapeTelegramHTML(item.Title))
 }
@@ -728,10 +730,12 @@ func (s *Server) handleTelegramCallback(ctx context.Context, delivery notify.Del
 	switch action {
 	case notify.TelegramCallbackDone:
 		status := reminder.StatusDone
-		if _, err := s.db.UpdateReminder(ctx, user.ID, item.ID, reminder.UpdateInput{Status: &status}); err != nil {
+		done, err := s.db.UpdateReminder(ctx, user.ID, item.ID, reminder.UpdateInput{Status: &status})
+		if err != nil {
 			_ = notify.AnswerTelegramCallback(ctx, delivery, cb.ID, "Could not update.")
 			return
 		}
+		s.hooks.EmitDone(ctx, done)
 		scheduler.ScheduleNextRecurrenceIfNeeded(ctx, s.db, user.ID, item.ID)
 		_ = notify.AnswerTelegramCallback(ctx, delivery, cb.ID, "Done")
 		s.editAlert(ctx, delivery, chatID, cb.Message.MessageID, "Done: "+notify.EscapeTelegramHTML(item.Title))

@@ -433,17 +433,19 @@ async function renderGoogleSettings() {
 async function renderAccountSettings() {
   let keys = [];
   let totp = { enabled: false };
-  try {
-    const [keysData, setupData] = await Promise.all([
-      API.get('/api/api-keys'),
-      fetch(API.url('/api/me/2fa/setup'), { method: 'POST', credentials: 'include' }).catch(() => null),
-    ]);
-    keys = keysData.api_keys || [];
-    if (setupData?.ok) {
-      totp = await setupData.json().catch(() => ({ enabled: false }));
-    }
-  } catch {
-    /* keys may still load */
+  let hooks = [];
+  let hookEvents = ['reminder.fired', 'reminder.done'];
+  // Read-only status: never call /2fa/setup on page load (it starts enrolment).
+  const [keysRes, totpRes, hooksRes] = await Promise.allSettled([
+    API.get('/api/api-keys'),
+    API.get('/api/me/2fa'),
+    API.get('/api/webhooks'),
+  ]);
+  if (keysRes.status === 'fulfilled') keys = keysRes.value.api_keys || [];
+  if (totpRes.status === 'fulfilled') totp = totpRes.value;
+  if (hooksRes.status === 'fulfilled') {
+    hooks = hooksRes.value.webhooks || [];
+    hookEvents = hooksRes.value.events || hookEvents;
   }
   const keyRows = keys.length
     ? keys.map((k) => `
@@ -456,9 +458,37 @@ async function renderAccountSettings() {
       `).join('')
     : '<tr><td colspan="4" class="table-empty">No API keys</td></tr>';
 
+  const hookStatus = (h) => {
+    if (!h.enabled) return `<span class="badge badge-paused">Disabled</span>${h.disabled_reason ? `<div class="channel-help">${escapeHTML(h.disabled_reason)}</div>` : ''}`;
+    if (!h.last_delivery_at) return '<span class="badge badge-paused">No deliveries yet</span>';
+    const when = new Date(h.last_delivery_at).toLocaleString();
+    return h.last_error
+      ? `<span class="badge badge-overdue">Failing</span><div class="channel-help">${escapeHTML(h.last_error)} · ${when}</div>`
+      : `<span class="badge badge-done">OK ${h.last_status_code || ''}</span><div class="channel-help">${when}</div>`;
+  };
+  const hookRows = hooks.length
+    ? hooks.map((h) => `
+        <tr>
+          <td class="mono-cell" style="word-break:break-all">${escapeHTML(h.url)}</td>
+          <td>${h.events.map(escapeHTML).join('<br>')}</td>
+          <td>${hookStatus(h)}</td>
+          <td class="inline-actions">
+            <button class="btn btn-sm" data-hook-test="${h.id}">Test</button>
+            <button class="btn btn-sm" data-hook-log="${h.id}">Log</button>
+            <button class="btn btn-sm" data-hook-toggle="${h.id}" data-enabled="${h.enabled}">${h.enabled ? 'Disable' : 'Enable'}</button>
+            <button class="btn btn-sm" data-hook-rotate="${h.id}">New secret</button>
+            <button class="btn btn-sm btn-danger" data-hook-delete="${h.id}">Delete</button>
+          </td>
+        </tr>
+      `).join('')
+    : '<tr><td colspan="4" class="table-empty">No webhooks</td></tr>';
+  const eventChecks = hookEvents.map((e) => `
+      <label class="checkbox-label"><input type="checkbox" name="hook-event" value="${escapeHTML(e)}" checked> ${escapeHTML(e)}</label>
+    `).join('');
+
   const main = `
     <h1 class="page-title">Account</h1>
-    <p class="page-sub">API keys and two-factor authentication</p>
+    <p class="page-sub">API keys, webhooks and two-factor authentication</p>
     <div class="card" style="margin-bottom:16px">
       <h3>API keys</h3>
       <div class="inline-actions">
@@ -472,6 +502,23 @@ async function renderAccountSettings() {
           <tbody>${keyRows}</tbody>
         </table>
       </div>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <h3>Webhooks</h3>
+      <p class="channel-help">Day Remind POSTs signed JSON to your public HTTPS endpoint when a reminder fires or is marked done.
+        Verify <code>X-DayRemind-Signature: t=&lt;unix&gt;,v1=&lt;hex&gt;</code> as HMAC-SHA256 of <code>&lt;t&gt;.&lt;body&gt;</code> with your secret.
+        Failed deliveries retry for about 3 hours.</p>
+      <div class="field"><label for="hook-url">Endpoint URL</label><input id="hook-url" type="url" placeholder="https://example.com/day-remind" autocomplete="off"></div>
+      <fieldset class="field" style="border:0;padding:0"><legend>Events</legend>${eventChecks}</fieldset>
+      <button class="btn btn-primary btn-sm" id="create-hook">Add webhook</button>
+      <pre id="new-hook-secret" class="link-out" hidden></pre>
+      <div class="table-wrap" style="margin-top:12px">
+        <table class="data-table">
+          <thead><tr><th>URL</th><th>Events</th><th>Status</th><th></th></tr></thead>
+          <tbody>${hookRows}</tbody>
+        </table>
+      </div>
+      <div id="hook-log" hidden style="margin-top:12px"></div>
     </div>
     <div class="card">
       <h3>Two-factor authentication</h3>
@@ -518,6 +565,104 @@ async function renderAccountSettings() {
       }
     });
   });
+  if (totp.enabled) {
+    document.getElementById('totp-begin').hidden = true;
+    document.getElementById('totp-disable').hidden = false;
+  }
+
+  const showSecret = (secret, note) => {
+    const pre = document.getElementById('new-hook-secret');
+    pre.hidden = false;
+    pre.textContent = `${note} — copy it now, it won't be shown again:\n${secret}`;
+  };
+  const rerenderKeepingSecret = async () => {
+    const pre = document.getElementById('new-hook-secret');
+    const text = pre && !pre.hidden ? pre.textContent : '';
+    await renderAccountSettings();
+    if (text) showSecret(text.split('\n').slice(1).join('\n'), 'Signing secret');
+  };
+  document.getElementById('create-hook')?.addEventListener('click', async () => {
+    const url = document.getElementById('hook-url').value.trim();
+    const events = [...document.querySelectorAll('input[name="hook-event"]:checked')].map((el) => el.value);
+    try {
+      const res = await API.post('/api/webhooks', { url, events });
+      showSecret(res.secret, 'Signing secret');
+      showToast('Webhook added');
+      await rerenderKeepingSecret();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+  document.querySelectorAll('[data-hook-test]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        const res = await API.post(`/api/webhooks/${btn.dataset.hookTest}/test`);
+        showToast(res.ok ? `Ping delivered (HTTP ${res.status_code})` : `Ping failed: ${res.error}`, res.ok ? undefined : 'error');
+        renderAccountSettings();
+      } catch (err) {
+        showToast(err.message, 'error');
+        btn.disabled = false;
+      }
+    });
+  });
+  document.querySelectorAll('[data-hook-log]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const box = document.getElementById('hook-log');
+      try {
+        const res = await API.get(`/api/webhooks/${btn.dataset.hookLog}/deliveries`);
+        const rows = (res.deliveries || []).map((d) => `
+          <tr>
+            <td>${new Date(d.created_at).toLocaleString()}</td>
+            <td>${escapeHTML(d.event)}</td>
+            <td>${escapeHTML(d.status)}${d.response_code ? ` · ${d.response_code}` : ''}</td>
+            <td>${d.attempt_count}</td>
+            <td>${escapeHTML(d.last_error || '')}${d.next_attempt_at ? ` (retry ${new Date(d.next_attempt_at).toLocaleTimeString()})` : ''}</td>
+          </tr>`).join('') || '<tr><td colspan="5" class="table-empty">No deliveries in the last 30 days</td></tr>';
+        box.hidden = false;
+        box.innerHTML = `<h4>Recent deliveries</h4><div class="table-wrap"><table class="data-table">
+          <thead><tr><th>When</th><th>Event</th><th>Status</th><th>Attempts</th><th>Error</th></tr></thead>
+          <tbody>${rows}</tbody></table></div>`;
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  });
+  document.querySelectorAll('[data-hook-toggle]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        await API.patch(`/api/webhooks/${btn.dataset.hookToggle}`, { enabled: btn.dataset.enabled !== 'true' });
+        renderAccountSettings();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  });
+  document.querySelectorAll('[data-hook-rotate]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Generate a new signing secret? The old one stops working immediately.')) return;
+      try {
+        const res = await API.patch(`/api/webhooks/${btn.dataset.hookRotate}`, { rotate_secret: true });
+        showSecret(res.secret, 'New signing secret');
+        await rerenderKeepingSecret();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  });
+  document.querySelectorAll('[data-hook-delete]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Delete this webhook?')) return;
+      try {
+        await API.delete(`/api/webhooks/${btn.dataset.hookDelete}`);
+        showToast('Webhook deleted');
+        renderAccountSettings();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  });
+
   document.getElementById('totp-begin')?.addEventListener('click', async () => {
     try {
       const res = await API.post('/api/me/2fa/setup');
@@ -891,7 +1036,7 @@ function renderSettingsEnhanced(route) {
       </div>
       <div class="card settings-card" data-href="#/settings/account">
         <h3>Account</h3>
-        <p>API keys and two-factor authentication.</p>
+        <p>API keys, webhooks and two-factor authentication.</p>
       </div>
       <div class="card settings-card">
         <h3>Profile</h3>

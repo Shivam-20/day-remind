@@ -230,6 +230,12 @@ func (db *DB) DeleteUser(ctx context.Context, id uuid.UUID) error {
 	if _, err := db.collection("sessions").DeleteMany(ctx, bson.M{"user_id": id}); err != nil {
 		return err
 	}
+	// Stop outbound webhooks for a deleted account.
+	for _, coll := range []string{"webhooks", "webhook_deliveries"} {
+		if _, err := db.collection(coll).DeleteMany(ctx, bson.M{"user_id": id}); err != nil {
+			return err
+		}
+	}
 	res, err := db.collection("users").DeleteOne(ctx, bson.M{"_id": id})
 	if err != nil {
 		return err

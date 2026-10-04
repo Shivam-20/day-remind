@@ -14,11 +14,16 @@ import (
 // ssoAdminRoles are the Launchpad roles that map to day-remind admin.
 var ssoAdminRoles = map[string]bool{"owner": true, "admin": true}
 
-// ungatedPathPrefixes are the paths the home Caddy proxies WITHOUT
-// forward_auth (/remind/api/v1/*, /remind/api/webhooks/*, /remind/api/health).
-// X-Auth-* headers on these requests come straight from the client, so they
-// must never be trusted as identity.
-var ungatedPathPrefixes = []string{"/api/v1/", "/api/webhooks/", "/api/health"}
+// ungatedPathPrefixes mirror the paths the home Caddy proxies WITHOUT
+// forward_auth (~/apps/caddy/Caddyfile). Caddy also strips client X-Auth-*
+// headers, but if that ever regresses these requests would carry forged
+// identity, so they are never trusted as identity here either.
+var ungatedPathPrefixes = []string{
+	"/api/v1/",
+	"/api/health",
+	"/api/webhooks/telegram",
+	"/api/webhooks/email-ingest",
+}
 
 func isUngatedPath(path string) bool {
 	for _, p := range ungatedPathPrefixes {

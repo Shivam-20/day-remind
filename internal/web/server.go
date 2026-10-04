@@ -13,15 +13,20 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/shivam-20/day-remind/internal/config"
 	"github.com/shivam-20/day-remind/internal/storage"
+	"github.com/shivam-20/day-remind/internal/webhook"
 )
 
 //go:embed all:static
 var staticFiles embed.FS
 
 type Server struct {
-	cfg config.Config
-	db  *storage.DB
+	cfg   config.Config
+	db    *storage.DB
+	hooks *webhook.Dispatcher
 }
+
+// SetWebhooks enables outbound user webhooks (reminder.done, test pings).
+func (s *Server) SetWebhooks(d *webhook.Dispatcher) { s.hooks = d }
 
 func New(cfg config.Config, db *storage.DB) *Server {
 	return &Server{cfg: cfg, db: db}
@@ -115,6 +120,9 @@ func (s *Server) Handler() http.Handler {
 		pr.Get("/api/webhooks/{id}", s.handleGetWebhook)
 		pr.Patch("/api/webhooks/{id}", s.handleUpdateWebhook)
 		pr.Delete("/api/webhooks/{id}", s.handleDeleteWebhook)
+		pr.Post("/api/webhooks/{id}/test", s.handleTestWebhook)
+		pr.Get("/api/webhooks/{id}/deliveries", s.handleListWebhookDeliveries)
+		pr.Get("/api/me/2fa", s.handleTOTPStatus)
 
 		pr.Get("/api/export/json", s.handleExportJSON)
 		pr.Get("/api/export/ical", s.handleExportICal)

@@ -11,6 +11,14 @@ type totpEnableRequest struct {
 	Code string `json:"code"`
 }
 
+func (s *Server) handleTOTPStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := s.db.GetTOTPStatus(r.Context(), userIDFromContext(r.Context()))
+	if writeStorageErr(w, err, "not found") {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": status.Enabled})
+}
+
 func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 	userID := userIDFromContext(r.Context())
 	user, err := s.db.GetUserByID(r.Context(), userID)

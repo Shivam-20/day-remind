@@ -13,6 +13,7 @@ import (
 	"github.com/shivam-20/day-remind/internal/scheduler"
 	"github.com/shivam-20/day-remind/internal/storage"
 	"github.com/shivam-20/day-remind/internal/web"
+	"github.com/shivam-20/day-remind/internal/webhook"
 )
 
 func main() {
@@ -29,12 +30,17 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
+	hooks := webhook.New(db, cfg.WebhookBaseURL)
+	go hooks.Run(ctx)
+
 	sched := scheduler.New(db, cfg)
+	sched.Webhooks = hooks
 	go sched.Run(ctx)
 
 	go runMorningDigests(ctx, db, cfg)
 
 	srv := web.New(cfg, db)
+	srv.SetWebhooks(hooks)
 	go srv.RunTelegram(ctx)
 	go func() {
 		if err := srv.ListenAndServe(); err != nil {
