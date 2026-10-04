@@ -179,7 +179,7 @@ Do **not** import `storage` from `reminder`. Web imports both.
 
 ### Telegram Gateway (production)
 
-Production uses **telegram-gateway** on a1-watcher (`http://161.118.181.5/tg`). Setting
+Production uses **telegram-gateway** on a1-watcher (`https://dev4help.in/tg`). Setting
 `TELEGRAM_GATEWAY_URL` + `TELEGRAM_GATEWAY_API_TOKEN` makes day-remind stop calling
 `getUpdates` / `setWebhook` and route all Telegram traffic through the gateway:
 
@@ -270,7 +270,7 @@ docs/plans/                 # Implementation roadmap
 | `TELEGRAM_BOT_TOKEN` | no | Telegram bot token (admin can also set in DB) |
 | `TELEGRAM_UPDATE_MODE` | no | `polling` (default, no public URL needed) \| `webhook` \| `off`. Webhook mode requires an `https` `WEBHOOK_BASE_URL`. Ignored for transport when `TELEGRAM_GATEWAY_URL` is set |
 | `TELEGRAM_WEBHOOK_SECRET` | webhook mode | `secret_token` for webhook mode (direct or gateway push). **Required** — `/api/webhooks/telegram` rejects every update when unset or mismatched, and returns 404 unless a webhook transport is configured |
-| `TELEGRAM_GATEWAY_URL` | no | Telegram-gateway base URL (prod `http://161.118.181.5/tg`). When set, day-remind routes all Telegram traffic through the gateway |
+| `TELEGRAM_GATEWAY_URL` | no | Telegram-gateway base URL (prod `https://dev4help.in/tg`). When set, day-remind routes all Telegram traffic through the gateway |
 | `TELEGRAM_GATEWAY_API_TOKEN` | no | Bearer API token (`tgw_…`) issued by the gateway for the day-remind service |
 | `TELEGRAM_GATEWAY_INBOUND_MODE` | no | How day-remind receives updates from the gateway: `poll` (default) \| `webhook` \| `both` |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URL` | no | Google OAuth for Calendar/Gmail sync |

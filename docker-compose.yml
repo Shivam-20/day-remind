@@ -30,8 +30,8 @@ services:
       # container reaches mongo by service name (overrides localhost .env value)
       DATABASE_URL: mongodb://dayremind:dayremind@mongo:27017/day_remind?authSource=admin
       # Telegram Gateway lives on a1-watcher, not this compose file.
-      # Set TELEGRAM_GATEWAY_URL=http://161.118.181.5/tg in .env (not Docker DNS).
-      # TELEGRAM_GATEWAY_URL: http://161.118.181.5/tg
+      # Set TELEGRAM_GATEWAY_URL=https://dev4help.in/tg in .env (not Docker DNS).
+      # TELEGRAM_GATEWAY_URL: https://dev4help.in/tg
       # TELEGRAM_GATEWAY_API_TOKEN: tgw_...
       # TELEGRAM_GATEWAY_INBOUND_MODE: poll
     networks:
