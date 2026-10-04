@@ -271,26 +271,28 @@ func (db *DB) DeleteUserExportData(ctx context.Context, userID uuid.UUID) error 
 
 // UpsertListRecord inserts or updates a list during import.
 func (db *DB) UpsertListRecord(ctx context.Context, userID uuid.UUID, rec ListRecord) error {
+	// Only the imported fields: a full listDoc would also $set created_at
+	// (conflicting with $setOnInsert) and reset sort_order on merge.
 	now := time.Now().UTC()
-	doc := listDoc{
-		ID:        rec.ID,
-		UserID:    userID,
-		Name:      rec.Name,
-		Color:     rec.Color,
-		Paused:    rec.Paused,
-		UpdatedAt: now,
+	set := bson.M{
+		"name":       rec.Name,
+		"color":      rec.Color,
+		"paused":     rec.Paused,
+		"updated_at": now,
 	}
 	_, err := db.collection("lists").UpdateOne(ctx, bson.M{"_id": rec.ID, "user_id": userID},
-		bson.M{"$set": doc, "$setOnInsert": bson.M{"created_at": now}},
+		bson.M{"$set": set, "$setOnInsert": bson.M{"created_at": now}},
 		options.Update().SetUpsert(true))
 	return err
 }
 
 // UpsertTagRecord inserts or updates a tag during import.
 func (db *DB) UpsertTagRecord(ctx context.Context, userID uuid.UUID, rec TagRecord) error {
-	doc := tagDoc{ID: rec.ID, UserID: userID, Name: rec.Name}
+	// A full tagDoc would zero created_at/updated_at on every import.
+	now := time.Now().UTC()
 	_, err := db.collection("tags").UpdateOne(ctx, bson.M{"_id": rec.ID, "user_id": userID},
-		bson.M{"$set": doc}, options.Update().SetUpsert(true))
+		bson.M{"$set": bson.M{"name": rec.Name, "updated_at": now}, "$setOnInsert": bson.M{"created_at": now}},
+		options.Update().SetUpsert(true))
 	return err
 }
 
