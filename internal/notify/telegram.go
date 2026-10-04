@@ -394,7 +394,8 @@ func CallGatewayStatus(ctx context.Context, d DeliveryConfig) (json.RawMessage, 
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+d.TelegramGatewayAPIToken)
-	client := &http.Client{Timeout: 60 * time.Second}
+	// Status backs an admin page load; don't let a slow gateway hang it.
+	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("telegram-gateway: %w", err)

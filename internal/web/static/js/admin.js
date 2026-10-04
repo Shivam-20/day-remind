@@ -840,6 +840,10 @@ async function renderAdminTelegram() {
     showToast(err.message, 'error');
     return;
   }
+  if (!status) {
+    showToast('Telegram status unavailable', 'error');
+    return;
+  }
   const rows = adminState.telegramUsers.map((u) => `
     <tr>
       <td>
@@ -871,9 +875,15 @@ async function renderAdminTelegram() {
     </div>
     <div class="card alert-channel-card">
       <h3>Bot status</h3>
+      ${status.uses_gateway ? `
+      <p class="channel-help">Transport: <strong>telegram-gateway</strong> · Inbound: <strong>${escapeHTML(status.gateway_inbound_mode || 'poll')}</strong></p>
+      <p class="channel-help">Gateway: <code>${escapeHTML(status.gateway_url || '')}</code></p>
+      <p class="channel-help">${status.gateway_status_error
+        ? `<span class="badge badge-overdue">Unreachable</span> ${escapeHTML(status.gateway_status_error)}`
+        : '<span class="badge badge-done">Gateway reachable</span>'}</p>` : `
       <p class="channel-help">Update mode: <strong>${escapeHTML(status.mode || 'polling')}</strong> · Bot ${status.configured ? 'configured' : 'not configured'} · Webhook secret ${status.secret_set ? 'set' : 'not set'}</p>
-      <p class="channel-help">Webhook URL: <code>${webhookState}</code></p>
-      ${status.configured && isWebhookMode ? `
+      <p class="channel-help">Webhook URL: <code>${webhookState}</code></p>`}
+      ${!status.uses_gateway && status.configured && isWebhookMode ? `
       <div class="inline-actions">
         <button class="btn btn-sm" id="tg-register">Register webhook</button>
         <button class="btn btn-sm btn-danger" id="tg-delete">Delete webhook</button>

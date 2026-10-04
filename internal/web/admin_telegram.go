@@ -124,6 +124,7 @@ func (s *Server) handleAdminTelegramStatus(w http.ResponseWriter, r *http.Reques
 		} else {
 			out["gateway_status_error"] = err.Error()
 		}
+		writeJSON(w, http.StatusOK, out)
 		return
 	}
 	if delivery.TelegramBotToken != "" {
