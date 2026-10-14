@@ -348,7 +348,7 @@ func (s *Server) telegramWelcome(ctx context.Context, delivery notify.DeliveryCo
 	b.WriteString("I can create and manage reminders right here in Telegram.\n\n")
 	b.WriteString(telegramHelpText)
 	var keyboard *notify.TelegramInlineKeyboard
-	if url := s.appURL(); url != "" {
+	if url := notify.TelegramButtonURL(s.appURL()); url != "" {
 		keyboard = &notify.TelegramInlineKeyboard{
 			InlineKeyboard: [][]notify.TelegramInlineButton{{{Text: "Open Day Remind", URL: url}}},
 		}

@@ -56,6 +56,17 @@ func ParseTelegramCallbackData(data string) (action, id, arg string) {
 	return action, id, arg
 }
 
+// TelegramButtonURL returns raw when Telegram can use it as an inline-button
+// URL. Only https is accepted; an http link fails the entire sendMessage,
+// which would also drop the Done and Snooze buttons.
+func TelegramButtonURL(raw string) string {
+	u := strings.TrimSpace(raw)
+	if !strings.HasPrefix(strings.ToLower(u), "https://") {
+		return ""
+	}
+	return u
+}
+
 // TelegramReminderKeyboard builds the standard alert/list keyboard for a
 // reminder, optionally with an "open in app" URL button.
 func TelegramReminderKeyboard(id, deepLink string) *TelegramInlineKeyboard {
@@ -64,8 +75,8 @@ func TelegramReminderKeyboard(id, deepLink string) *TelegramInlineKeyboard {
 		{Text: "Snooze 1h", CallbackData: TelegramCallbackData(TelegramCallbackSnooze, id, "1h")},
 		{Text: "Snooze tomorrow", CallbackData: TelegramCallbackData(TelegramCallbackSnooze, id, "tomorrow_9am")},
 	}}
-	if strings.TrimSpace(deepLink) != "" {
-		rows = append(rows, []TelegramInlineButton{{Text: "Open in Day Remind", URL: deepLink}})
+	if link := TelegramButtonURL(deepLink); link != "" {
+		rows = append(rows, []TelegramInlineButton{{Text: "Open in Day Remind", URL: link}})
 	}
 	return &TelegramInlineKeyboard{InlineKeyboard: rows}
 }

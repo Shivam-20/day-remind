@@ -209,4 +209,19 @@ func TestTelegramReminderKeyboard(t *testing.T) {
 	if len(withoutLink.InlineKeyboard) != 1 {
 		t.Fatalf("expected 1 row without deep link, got %d", len(withoutLink.InlineKeyboard))
 	}
+	httpLink := TelegramReminderKeyboard("abc", "http://161.118.181.5/remind/#/reminders?open=abc")
+	if len(httpLink.InlineKeyboard) != 1 {
+		t.Fatalf("expected http deep link to be omitted, got %d rows", len(httpLink.InlineKeyboard))
+	}
+}
+
+func TestTelegramButtonURL(t *testing.T) {
+	if got := TelegramButtonURL("https://example.com/remind/"); got != "https://example.com/remind/" {
+		t.Fatalf("https url = %q", got)
+	}
+	for _, raw := range []string{"", "http://161.118.181.5/remind/", "localhost", "ftp://example.com/a"} {
+		if got := TelegramButtonURL(raw); got != "" {
+			t.Fatalf("TelegramButtonURL(%q) = %q, want empty", raw, got)
+		}
+	}
 }
