@@ -56,13 +56,9 @@ func Load() (Config, error) {
 	if len(sessionKey) < 32 {
 		return Config{}, fmt.Errorf("SESSION_KEY must be at least 32 characters")
 	}
-	port := 8090
-	if raw := strings.TrimSpace(os.Getenv("WEB_PORT")); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 {
-			return Config{}, fmt.Errorf("invalid WEB_PORT: %q", raw)
-		}
-		port = n
+	port, err := resolveListenPort()
+	if err != nil {
+		return Config{}, err
 	}
 	maxFree := 50
 	if raw := strings.TrimSpace(os.Getenv("MAX_FREE_REMINDERS")); raw != "" {
@@ -137,6 +133,27 @@ func Load() (Config, error) {
 	}, nil
 }
 
+// resolveListenPort returns the TCP port the HTTP server binds.
+// Botkeep injects SERVER_PORT and proxies to that port, so it wins when set.
+// Home deploy keeps using WEB_PORT (default 8090) and leaves SERVER_PORT unset.
+func resolveListenPort() (int, error) {
+	if raw := strings.TrimSpace(os.Getenv("SERVER_PORT")); raw != "" {
+		return parseListenPort("SERVER_PORT", raw)
+	}
+	if raw := strings.TrimSpace(os.Getenv("WEB_PORT")); raw != "" {
+		return parseListenPort("WEB_PORT", raw)
+	}
+	return 8090, nil
+}
+
+func parseListenPort(name, raw string) (int, error) {
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > 65535 {
+		return 0, fmt.Errorf("invalid %s: %q", name, raw)
+	}
+	return n, nil
+}
+
 func parseList(raw string) []string {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
@@ -172,4 +189,3 @@ func normalizeGatewayInboundMode(mode string) string {
 func (c Config) HasTelegramGateway() bool {
 	return strings.TrimSpace(c.TelegramGatewayURL) != "" && strings.TrimSpace(c.TelegramGatewayAPIToken) != ""
 }
-

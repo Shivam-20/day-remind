@@ -257,7 +257,8 @@ docs/plans/                 # Implementation roadmap
 |----------|----------|-------------|
 | `DATABASE_URL` | yes | MongoDB URI, e.g. `mongodb://dayremind:dayremind@localhost:27017/day_remind?authSource=admin` (compose overrides to `mongo:27017` for the `app` service) |
 | `SESSION_KEY` | yes | Min 32 chars (loaded but cookie is stateless token in DB today) |
-| `WEB_PORT` | no | Default `8090` |
+| `WEB_PORT` | no | Listen port when `SERVER_PORT` is unset. Default `8090` |
+| `SERVER_PORT` | no | Listen port injected by Botkeep. When set, overrides `WEB_PORT`. Leave unset on the home deploy |
 | `APP_BASE_PATH` | no | Public path prefix, e.g. `/remind` — **required** for OCI/Caddy path deploy |
 | `ADMIN_EMAILS` | no | Comma-separated emails auto-promoted to `is_admin: true` on startup + signup |
 | `RESEND_API_KEY` | no | Resend API key for email alerts (admin can also set in DB) |
