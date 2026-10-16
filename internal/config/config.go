@@ -32,6 +32,9 @@ type Config struct {
 	// is promoted to admin on their next signup or login, which keeps the role
 	// grantable only by whoever controls the server environment.
 	AdminEmails map[string]bool
+	// AppBasePath is the URL prefix when the app is reverse-proxied (e.g. /remind).
+	// Injected into index.html as <base href="…"> for assets and API path resolution.
+	AppBasePath string
 }
 
 // IsAdminEmail reports whether the address is pinned to admin by configuration.
@@ -142,10 +145,16 @@ func Load() (Config, error) {
 	if apiBase == "" {
 		apiBase = "https://api.telegram.org"
 	}
+	appBase := strings.TrimSpace(os.Getenv("APP_BASE_PATH"))
+	appBase = strings.TrimRight(appBase, "/")
+	if appBase == "/" {
+		appBase = ""
+	}
 	return Config{
 		DatabaseURL:       dbURL,
 		WebPort:           port,
 		SessionKey:        sessionKey,
+		AppBasePath:       appBase,
 		SMTP:              smtpCfg,
 		TelegramBotToken:  strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
 		TelegramAPIBase:   apiBase,

@@ -20,7 +20,9 @@ Many eggs use a **Go SDK image** and run `go build` on every start. That writes 
 3. **Environment variables** (panel → Variables), not a baked `.env`:
    - `DATABASE_URL` — include `/day_remind` in the path
    - `SESSION_KEY` — 32+ characters
-   - Optional: `WEB_PORT`, `ADMIN_EMAILS`, `DAY_REMIND_SKIP_DOTENV=1`
+   - `WEB_PORT` — **must match** the panel allocation (e.g. `49118`), not `8090`
+   - `APP_BASE_PATH` — `/remind` when served at `https://dev4help.in/remind/`
+   - Optional: `ADMIN_EMAILS`, `DAY_REMIND_SKIP_DOTENV=1`
 
 4. If the package is private, add a GHCR pull credential on the node.
 
@@ -51,3 +53,34 @@ Point the egg at your registry tag instead of GHCR.
 ## MongoDB from Botkeep
 
 Atlas **Network Access** must allow the node’s **outbound IP**. TLS errors often mean allowlist or blocked port `27017`, not slow queries.
+
+## Botkeep Developer API (`botkeep.cloud`, not `botkeeper.cloud`)
+
+- **Base URL:** `https://api.botkeep.cloud`
+- **Auth:** `Authorization: Bearer bk_live_…` (create keys in the panel under **Developer → API keys**)
+- **OpenAPI:** `GET /api/v1/developer/openapi.json` (same bearer token)
+
+Global Cursor skill: `~/.cursor/skills/botkeep-api/` (agent auto-use when you mention Botkeep / `bk_live`).
+
+Local helpers (key in `~/.botkeep-api-key`, gitignored `.botkeep-api-key`, or `BOTKEEP_API_KEY`):
+
+```bash
+chmod +x scripts/botkeep-api.sh scripts/botkeep-tune-day-remind.sh
+./scripts/botkeep-api.sh workloads
+./scripts/botkeep-api.sh workload 56ba890b-2b74-4e58-911d-61db5985b287
+./scripts/botkeep-tune-day-remind.sh   # cached go build, WEB_PORT, DATABASE_URL/db name, restart
+```
+
+Useful endpoints for Day Remind:
+
+| Action | Method | Path |
+|--------|--------|------|
+| List servers | GET | `/api/v1/developer/workloads` |
+| Startup / branch | PUT | `/api/v1/developer/workloads/{id}/settings` |
+| Env var | PUT | `/api/v1/developer/workloads/{id}/environment` |
+| GitHub pull | POST | `/api/v1/developer/workloads/{id}/github/sync` |
+| Restart | POST | `/api/v1/developer/workloads/{id}/actions` body `{"action":"restart"}` |
+
+Mutating calls need header `Idempotency-Key` (16–64 alphanumeric/`_-`). The helper script generates one.
+
+**Security:** Rotate any `bk_live_` key pasted into chat. Never commit API keys; `GET …/environment` can return variable values—treat the key like a password.

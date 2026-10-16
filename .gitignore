@@ -1,4 +1,5 @@
 .env
+.botkeep-api-key
 bin/
 data/
 *.db

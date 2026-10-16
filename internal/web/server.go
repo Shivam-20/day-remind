@@ -3,6 +3,7 @@ package web
 import (
 	"embed"
 	"fmt"
+	"html"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -128,6 +129,18 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing index", http.StatusInternalServerError)
 		return
 	}
+	htmlDoc := string(b)
+	if base := strings.TrimSpace(s.cfg.AppBasePath); base != "" {
+		if !strings.HasPrefix(base, "/") {
+			base = "/" + base
+		}
+		base = strings.TrimRight(base, "/") + "/"
+		tag := fmt.Sprintf("<base href=\"%s\">", html.EscapeString(base))
+		if strings.Contains(htmlDoc, "<head>") {
+			htmlDoc = strings.Replace(htmlDoc, "<head>", "<head>\n  "+tag, 1)
+		}
+	}
+	b = []byte(htmlDoc)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 	_, _ = w.Write(b)
