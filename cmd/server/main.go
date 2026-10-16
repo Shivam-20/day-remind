@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/joho/godotenv"
 	"github.com/shivam-20/day-remind/internal/bot"
 	"github.com/shivam-20/day-remind/internal/config"
 	"github.com/shivam-20/day-remind/internal/delivery"
@@ -22,7 +21,7 @@ import (
 )
 
 func main() {
-	_ = godotenv.Load()
+	config.LoadEnvFiles()
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("config: %v", err)
