@@ -102,12 +102,11 @@ function renderAuth(signup) {
 }
 
 function shellNavHTML(active) {
-  const feature = window.DR_FEATURE_ROUTES || {};
   const links = [
     { href: '#/today', path: '/today', label: 'Today' },
-    ...(feature['/calendar'] ? [{ href: '#/calendar', path: '/calendar', label: 'Calendar' }] : []),
+    { href: '#/calendar', path: '/calendar', label: 'Calendar' },
     { href: '#/reminders', path: '/reminders', label: 'All reminders' },
-    ...(feature['/lists'] ? [{ href: '#/lists', path: '/lists', label: 'Lists' }] : []),
+    { href: '#/lists', path: '/lists', label: 'Lists' },
     { href: '#/settings', path: '/settings', label: 'Settings', match: (p) => p.startsWith('/settings') },
     ...(isAdmin() ? [{ href: '#/admin', path: '/admin', label: 'Admin' }] : []),
   ];

@@ -700,3 +700,67 @@ button, input, select, textarea { font: inherit; }
   word-break: break-word;
   color: var(--text-2);
 }
+
+.page-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.cal-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.cal-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(260px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.cal-weekdays, .cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+.cal-weekdays {
+  margin-bottom: 8px;
+  color: var(--text-3);
+  font-size: 0.75rem;
+  text-align: center;
+}
+.cal-cell {
+  min-height: 52px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-1);
+  border-radius: var(--radius-sm);
+  padding: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+.cal-cell.cal-empty { visibility: hidden; cursor: default; }
+.cal-cell.cal-today { border-color: var(--accent); }
+.cal-cell.cal-selected { background: var(--accent-soft); }
+.cal-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-top: 6px;
+}
+.list-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+.list-card { display: grid; grid-template-columns: 4px 1fr auto; gap: 10px; align-items: center; }
+.list-card-stripe { width: 4px; align-self: stretch; border-radius: 4px; background: var(--list-color, var(--accent)); }
+.list-card h3 { margin: 0 0 4px; font-size: 1rem; }
+@media (max-width: 900px) {
+  .cal-layout { grid-template-columns: 1fr; }
+}

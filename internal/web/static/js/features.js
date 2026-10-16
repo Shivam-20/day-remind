@@ -1,5 +1,7 @@
 /* Phases 4–12: calendar, lists, settings sub-pages, enhanced drawers */
 window.DR_FEATURE_ROUTES = {
+  '/calendar': renderCalendar,
+  '/lists': renderLists,
   '/settings/wording': renderMessageWording,
 };
 
@@ -49,16 +51,43 @@ async function loadListsAndTags() {
   return featureState;
 }
 
+function localDayKey(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+async function loadCalendarEvents(from, to) {
+  try {
+    const data = await API.get(`/api/calendar?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`);
+    return data.events || [];
+  } catch {
+    await loadReminders();
+    return (state.reminders || [])
+      .filter((r) => r.status !== 'cancelled')
+      .map((r) => ({
+        id: r.id,
+        title: r.title,
+        start: r.due_at,
+        status: r.status,
+        priority: r.priority,
+      }));
+  }
+}
+
 async function renderCalendar() {
   const year = featureState.calendarMonth.getFullYear();
   const month = featureState.calendarMonth.getMonth();
   const from = new Date(year, month, 1);
   const to = new Date(year, month + 1, 0, 23, 59, 59);
-  const data = await API.get(`/api/calendar?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`);
-  const events = data.events || [];
+  const events = await loadCalendarEvents(from, to);
   const byDay = {};
   events.forEach((ev) => {
-    const key = ev.start.slice(0, 10);
+    const key = localDayKey(ev.start);
+    if (!key) return;
     if (!byDay[key]) byDay[key] = [];
     byDay[key].push(ev);
   });
@@ -70,7 +99,7 @@ async function renderCalendar() {
   for (let i = 0; i < firstDow; i++) {
     cells += '<div class="cal-cell cal-empty"></div>';
   }
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayKey = localDayKey(new Date().toISOString());
   for (let d = 1; d <= daysInMonth; d++) {
     const key = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     const count = (byDay[key] || []).length;
@@ -141,9 +170,32 @@ async function renderCalendar() {
   bindReminderActions(document.getElementById('app'), () => renderCalendar());
 }
 
+async function loadListsOrFallback() {
+  try {
+    const data = await API.get('/api/lists');
+    return { lists: data.lists || [], canManage: true };
+  } catch {
+    await loadReminders();
+    const groups = {};
+    (state.reminders || []).forEach((r) => {
+      const id = r.list_id || 'unlisted';
+      if (!groups[id]) {
+        groups[id] = {
+          id,
+          name: r.list_name || (id === 'unlisted' ? 'Unlisted' : 'List'),
+          count: 0,
+          paused: false,
+          color: '#f5a623',
+        };
+      }
+      if (r.status !== 'done' && r.status !== 'cancelled') groups[id].count += 1;
+    });
+    return { lists: Object.values(groups), canManage: false };
+  }
+}
+
 async function renderLists() {
-  const data = await API.get('/api/lists');
-  const lists = data.lists || [];
+  const { lists, canManage } = await loadListsOrFallback();
   const countLabel = lists.length === 1 ? '1 list' : `${lists.length} lists`;
   const cards = lists.map((l) => `
         <article class="list-card card" style="--list-color:${escapeHTML(l.color || '#3b82f6')}">
@@ -153,9 +205,11 @@ async function renderLists() {
             <p class="page-sub">${l.count ?? 0} active · ${l.paused ? 'Paused' : 'Active'}</p>
           </div>
           <div class="list-card-actions">
-            ${l.paused
-              ? `<button class="btn btn-sm" data-resume="${l.id}">Resume</button>`
-              : `<button class="btn btn-sm" data-pause="${l.id}">Pause</button>`}
+            ${canManage
+              ? (l.paused
+                ? `<button class="btn btn-sm" data-resume="${l.id}">Resume</button>`
+                : `<button class="btn btn-sm" data-pause="${l.id}">Pause</button>`)
+              : `<a class="btn btn-sm" href="#/reminders">View</a>`}
           </div>
         </article>
       `).join('');
@@ -164,8 +218,10 @@ async function renderLists() {
        <p class="list-page-footer"><a href="#/reminders" class="btn btn-ghost btn-sm">View all reminders</a></p>`
     : emptyState(
         'No lists yet',
-        'Create a list to organize reminders.',
-        '<button class="btn btn-primary" data-new-list>Create list</button><a href="#/reminders" class="btn btn-ghost btn-sm">View all reminders</a>'
+        canManage ? 'Create a list to organize reminders.' : 'Lists are not configured on this server yet. Reminders still show under All reminders.',
+        canManage
+          ? '<button class="btn btn-primary" data-new-list>Create list</button><a href="#/reminders" class="btn btn-ghost btn-sm">View all reminders</a>'
+          : '<a href="#/reminders" class="btn btn-primary btn-sm">View all reminders</a>'
       );
 
   const main = `
@@ -174,7 +230,7 @@ async function renderLists() {
         <h1 class="page-title">Lists</h1>
         <p class="page-sub">${countLabel}</p>
       </div>
-      <button class="btn btn-primary btn-sm" data-new-list>+ New list</button>
+      ${canManage ? '<button class="btn btn-primary btn-sm" data-new-list>+ New list</button>' : ''}
     </div>
     ${body}
   `;
