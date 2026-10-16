@@ -1,15 +1,6 @@
 /* Phases 4–12: calendar, lists, settings sub-pages, enhanced drawers */
 window.DR_FEATURE_ROUTES = {
-  '/today': renderTodayEnhanced,
-  '/reminders': renderRemindersEnhanced,
-  '/calendar': renderCalendar,
-  '/lists': renderLists,
-  '/settings': renderSettingsEnhanced,
-  '/settings/data': renderDataSettings,
-  '/settings/templates': renderTemplateGallery,
   '/settings/wording': renderMessageWording,
-  '/settings/google': renderGoogleSettings,
-  '/settings/account': renderAccountSettings,
 };
 
 const featureState = {
@@ -547,7 +538,7 @@ async function renderTodayEnhanced() {
   try {
     stats = await API.get('/api/stats/dashboard');
   } catch {
-    return renderTodayLegacy();
+    return renderToday();
   }
   await loadReminders();
   const now = new Date();
@@ -868,6 +859,4 @@ function renderSettingsEnhanced(route) {
   });
 }
 
-/* Override drawers used from app.js shell */
-window.openCreateDrawer = openCreateDrawerEnhanced;
-window.openReminderDrawer = openReminderDrawerEnhanced;
+/* Drawers stay on app.js until lists/subtasks APIs exist on this server. */

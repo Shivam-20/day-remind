@@ -156,7 +156,7 @@ button, input, select, textarea { font: inherit; }
 .reminder-list { display: flex; flex-direction: column; gap: 10px; }
 .reminder-card {
   display: grid;
-  grid-template-columns: 4px 1fr auto;
+  grid-template-columns: 4px minmax(0, 1fr);
   gap: 12px;
   align-items: start;
   padding: 14px 16px;
@@ -169,7 +169,13 @@ button, input, select, textarea { font: inherit; }
 .reminder-time { font-family: var(--mono); font-size: 0.875rem; color: var(--text-2); }
 .reminder-title { font-weight: 600; margin: 4px 0; }
 .reminder-meta { font-size: 0.8rem; color: var(--text-3); }
-.reminder-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.reminder-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  margin-top: 10px;
+}
 .btn-with-icon {
   display: inline-flex;
   align-items: center;
@@ -338,8 +344,7 @@ button, input, select, textarea { font: inherit; }
   .bottom-nav { display: grid; }
   .fab { display: block; }
   .page { padding: 16px 16px calc(var(--bottom-nav-h) + 80px); }
-  .reminder-card { grid-template-columns: 4px 1fr; }
-  .reminder-actions { grid-column: 1 / -1; justify-content: flex-start; }
+  .reminder-card { grid-template-columns: 4px minmax(0, 1fr); }
 }
 
 @media (prefers-reduced-motion: reduce) {

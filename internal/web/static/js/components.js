@@ -126,8 +126,8 @@ function reminderCardHTML(item, actionsHTML) {
         <div class="reminder-time">${formatDue(item.due_at, item.timezone)} ${statusBadge(item)}</div>
         <div class="reminder-title">${escapeHTML(item.title)}</div>
         <div class="reminder-meta">${escapeHTML(item.priority)} · ${escapeHTML(item.status)}</div>
+        <div class="reminder-actions">${actionsHTML}</div>
       </div>
-      <div class="reminder-actions">${actionsHTML}</div>
     </article>
   `;
 }
