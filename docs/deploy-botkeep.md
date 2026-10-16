@@ -72,6 +72,19 @@ chmod +x scripts/botkeep-api.sh scripts/botkeep-tune-day-remind.sh
 ./scripts/botkeep-pull-deploy.sh       # pull latest GitHub commit (needs BOTKEEP_SYNC_CONFIRM=server name)
 ```
 
+## Deploy via SFTP (skip GitHub sync)
+
+1. Botkeep panel → **Go server** → **SFTP** → **Create SFTP credentials** (password shown once; ~1 hour).
+2. `cp .botkeep-sftp.env.example .botkeep-sftp.env` and fill host, port, user, password.
+3. `brew install lftp` if needed, then:
+
+```bash
+chmod +x scripts/botkeep-sftp-deploy.sh
+./scripts/botkeep-sftp-deploy.sh
+```
+
+Uploads the repo root (excludes `.git`, secrets, `bin/`) and **restarts** the workload. Use when GitHub sync is slow or stuck.
+
 Useful endpoints for Day Remind:
 
 | Action | Method | Path |
