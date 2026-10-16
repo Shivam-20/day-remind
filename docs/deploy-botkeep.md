@@ -69,6 +69,7 @@ chmod +x scripts/botkeep-api.sh scripts/botkeep-tune-day-remind.sh
 ./scripts/botkeep-api.sh workloads
 ./scripts/botkeep-api.sh workload 56ba890b-2b74-4e58-911d-61db5985b287
 ./scripts/botkeep-tune-day-remind.sh   # cached go build, WEB_PORT, DATABASE_URL/db name, restart
+./scripts/botkeep-pull-deploy.sh       # pull latest GitHub commit (needs BOTKEEP_SYNC_CONFIRM=server name)
 ```
 
 Useful endpoints for Day Remind:

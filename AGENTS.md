@@ -52,10 +52,12 @@ day-remind/
 - Exercise the live app through an SSH tunnel to the home-server install when local MongoDB or Atlas is unavailable.
 - For UI and Message wording changes validated via the tunnel, mirror them in this repo and rebuild the home-server Docker app when the user is testing production.
 - Mail wording: named template library with HTML/CSS, Copy AI prompt, Paste AI result (JSON into the form), and View as mail for due and advance notices.
+- When checking Botkeep GitHub deploys, avoid repeated long sleep polling; use the Botkeep console or a single API snapshot unless timed rechecks are requested.
 
 ## Learned Workspace Facts
 
-- Production Day Remind runs in Docker on home-server `system04`; public `/remind` is fronted by Caddy on Oracle **`a1-watcher`** (`161.118.181.5`), which strips `/remind` and proxies to **`node9.botkeep.cloud:49118`** — same path for **`https://dev4help.in/remind/`** and **`http://161.118.181.5/remind/`** (other `dev4help.in` paths still use the home reverse tunnel on `127.0.0.1:18080`).
+- Public Day Remind runs on **Botkeep** (**`node9.botkeep.cloud:49118`**); Oracle Caddy on **`a1-watcher`** (`161.118.181.5`) strips `/remind` and reverse-proxies there for **`https://dev4help.in/remind/`** and **`http://161.118.181.5/remind/`** (other `dev4help.in` paths use the home tunnel on `127.0.0.1:18080`). Set workload env **`WEB_PORT=49118`** and **`APP_BASE_PATH=/remind`**.
+- **`scripts/botkeep-api.sh`** wraps the Botkeep Developer API (GitHub sync, workload status); auth via **`BOTKEEP_API_KEY`** or **`~/.botkeep-api-key`**.
 - **`https://dev4help.in/remind/`** needs an explicit **`http://dev4help.in`** block in `/etc/caddy/Caddyfile` (Cloudflare **Flexible SSL** sends HTTP to the origin); HTTPS-only `dev4help.in` caused a **308 redirect loop**. The `dev4help-remind-proxy` Worker was removed — fix Caddy, do not proxy `/remind` with a Worker.
 - Oracle/Caddy work: SSH **`ubuntu@161.118.181.5`** port **22**; **`system04` on port 2222** may be refused when reverse-SSH is down — use Oracle for Caddy or restore the tunnel for home-server deploys (keep mail forwards in `oracle-reverse-ssh-mail`, not the core tunnel unit).
 - Local access to the home install: `ssh -L 127.0.0.1:18080:127.0.0.1:8080 system04`, then `http://127.0.0.1:18080/remind/` (e.g. `#/admin`, `#/settings/wording`).

@@ -88,13 +88,55 @@ case "$cmd" in
       -d "$body" \
       "$BASE/api/v1/developer/workloads/$id/environment"
     ;;
-  github-sync)
+  github-inspect)
     id="${1:?workload id}"
+    repo="${2:?owner/repo}"
+    branch="${3:-}"
     key="$(idem)"
     curl -sS "${auth[@]}" -X POST \
       -H "Content-Type: application/json" \
       -H "Idempotency-Key: $key" \
-      -d '{}' \
+      -d "$(REPO="$repo" BR="$branch" python3 -c 'import json,os; print(json.dumps({"repository":os.environ["REPO"],"branch":os.environ["BR"]}))')" \
+      "$BASE/api/v1/developer/workloads/$id/github/inspect"
+    ;;
+  github-get)
+    id="${1:?workload id}"
+    curl -sS "${auth[@]}" "$BASE/api/v1/developer/workloads/$id/github"
+    ;;
+  github-recover)
+    id="${1:?workload id}"
+    act="${2:-resume}"
+    confirm="${3:-Go server}"
+    key="$(idem)"
+    curl -sS "${auth[@]}" -X POST \
+      -H "Content-Type: application/json" \
+      -H "Idempotency-Key: $key" \
+      -d "$(ACT="$act" CF="$confirm" python3 -c 'import json,os; print(json.dumps({"action":os.environ["ACT"],"confirmation":os.environ["CF"]}))')" \
+      "$BASE/api/v1/developer/workloads/$id/github/recover"
+    ;;
+  console-cmd)
+    id="${1:?workload id}"
+    cmd="${2:?command}"
+    key="$(idem)"
+    curl -sS "${auth[@]}" -X POST \
+      -H "Content-Type: application/json" \
+      -H "Idempotency-Key: $key" \
+      -d "$(CMD="$cmd" python3 -c 'import json,os; print(json.dumps({"command":os.environ["CMD"]}))')" \
+      "$BASE/api/v1/developer/workloads/$id/console/command"
+    ;;
+  github-sync)
+    id="${1:?workload id}"
+    repo="${2:?owner/repo}"
+    rev="${3:?64-char revision}"
+    branch="${4:-main}"
+    req="$(idem)"
+    key="$(idem)"
+    confirm="${BOTKEEP_SYNC_CONFIRM:-sync}"
+    body="$(REPO="$repo" BR="$branch" REV="$rev" REQ="$req" CF="$confirm" python3 -c 'import json,os; print(json.dumps({"repository":os.environ["REPO"],"branch":os.environ["BR"],"revision":os.environ["REV"],"confirmation":os.environ["CF"],"requestId":os.environ["REQ"],"restart":True}))')"
+    curl -sS "${auth[@]}" -X POST \
+      -H "Content-Type: application/json" \
+      -H "Idempotency-Key: $key" \
+      -d "$body" \
       "$BASE/api/v1/developer/workloads/$id/github/sync"
     ;;
   *)
@@ -110,7 +152,12 @@ Usage:
   botkeep-api.sh action <workload_id> restart
   botkeep-api.sh settings <workload_id> '<json>'
   botkeep-api.sh env-put <workload_id> '{"key":"WEB_PORT","value":"8090","isSecret":false}'
-  botkeep-api.sh github-sync <workload_id>
+  botkeep-api.sh github-get <workload_id>
+  botkeep-api.sh github-inspect <workload_id> <owner/repo> [branch]
+  botkeep-api.sh github-sync <workload_id> <owner/repo> <64-char-revision> [branch]
+  botkeep-api.sh github-recover <workload_id> [resume|rollback] [server-name]
+  botkeep-api.sh console-cmd <workload_id> '<command>'
+  ./scripts/botkeep-pull-deploy.sh   # github-get revision + sync (BOTKEEP_SYNC_CONFIRM)
 
 OpenAPI: GET /api/v1/developer/openapi.json
 Power:   POST /api/v1/developer/workloads/{id}/actions  (Idempotency-Key header)
