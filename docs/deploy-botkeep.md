@@ -74,7 +74,26 @@ chmod +x scripts/botkeep-api.sh scripts/botkeep-tune-day-remind.sh
 ./scripts/botkeep-pull-deploy.sh       # full GitHub tree — slow; avoid unless the node is empty
 ```
 
-Do **not** use GitHub sync for every push. Botkeep applies **every file in the repo** (~150+ paths). Prefer `botkeep-upload-changed.sh` or a pre-built `ghcr.io/shivam-20/day-remind` image if the egg allows a custom Docker image.
+Do **not** use GitHub sync for every push. Botkeep applies **every file in the repo** (~150+ paths). The GitHub `revision` is a **64-character import lock**, not a git SHA. Sync confirmation is the server name **`Go server`**. Keep **`autoPull` false**.
+
+### Preferred: files API + rebuild (this is how production is updated)
+
+Workload **`56ba890b-2b74-4e58-911d-61db5985b287`**. Static files are **`//go:embed`**, so uploading JS/CSS is not enough until the binary is rebuilt.
+
+```bash
+WL=56ba890b-2b74-4e58-911d-61db5985b287
+./scripts/botkeep-upload-changed.sh internal/web/static/js/app.js internal/web/static/index.html
+# equivalent:
+# ./scripts/botkeep-api.sh file-put "$WL" /internal/web/static/js/app.js internal/web/static/js/app.js
+# ./scripts/botkeep-api.sh console-cmd "$WL" "rm -f ./day-remind"
+# ./scripts/botkeep-api.sh action "$WL" restart
+```
+
+`botkeep-upload-changed.sh` already removes `./day-remind` and restarts. Startup rebuilds when `internal/web/static/js/app.js` is newer than the binary, then `exec ./day-remind`. Check the panel console or one API snapshot — do not sleep-poll.
+
+If Cloudflare still serves old `/static/js/*.js`, bump the query on `internal/web/static/index.html` (`?v=uiN`) and re-upload that HTML.
+
+This Go egg **cannot** switch to `ghcr.io/shivam-20/day-remind` via the Developer API. Prefer `botkeep-upload-changed.sh` over a full GitHub apply.
 
 ## Deploy via SFTP (skip GitHub sync)
 

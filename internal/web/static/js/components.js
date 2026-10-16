@@ -155,12 +155,7 @@ function setSidebarHidden(hidden) {
   document.querySelectorAll('[data-sidebar-toggle]').forEach((btn) => {
     const hide = isSidebarHidden();
     btn.setAttribute('aria-expanded', hide ? 'false' : 'true');
-    const label = btn.querySelector('.btn-label');
-    if (label) label.textContent = hide ? 'Show menu' : 'Hide menu';
-    const icon = btn.querySelector('.btn-icon');
-    if (icon && btn.closest('.sidebar-footer')) {
-      icon.innerHTML = actionIconSVG(hide ? 'menu' : 'panel');
-    }
+    btn.setAttribute('aria-label', hide ? 'Show menu' : 'Hide menu');
   });
 }
 
@@ -188,6 +183,161 @@ function toggleTheme() {
   const next = cur === 'dark' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-bs-theme', next);
   localStorage.setItem('drTheme', next);
+}
+
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+function localDateParts(d) {
+  return {
+    date: `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`,
+    time: `${pad2(d.getHours())}:${pad2(d.getMinutes())}`,
+  };
+}
+
+function parseYMD(ymd) {
+  const [y, m, day] = (ymd || '').split('-').map(Number);
+  if (!y || !m || !day) return new Date();
+  return new Date(y, m - 1, day);
+}
+
+function dueCalendarHTML(selectedYMD, monthDate) {
+  const y = monthDate.getFullYear();
+  const m = monthDate.getMonth();
+  const first = new Date(y, m, 1);
+  const startPad = first.getDay();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const today = localDateParts(new Date()).date;
+  const monthLabel = first.toLocaleString(undefined, { month: 'long', year: 'numeric' });
+  const weekdays = ['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d) => `<span>${d}</span>`).join('');
+  let cells = '';
+  for (let i = 0; i < startPad; i++) cells += '<span class="due-cal-cell due-cal-empty"></span>';
+  for (let d = 1; d <= daysInMonth; d++) {
+    const ymd = `${y}-${pad2(m + 1)}-${pad2(d)}`;
+    const cls = ['due-cal-cell'];
+    if (ymd === selectedYMD) cls.push('due-cal-selected');
+    if (ymd === today) cls.push('due-cal-today');
+    const aria = ymd === selectedYMD ? ' aria-current="date"' : '';
+    cells += `<button type="button" class="${cls.join(' ')}" data-due-pick="${ymd}"${aria}>${d}</button>`;
+  }
+  return `
+    <div class="due-cal" data-due-month="${y}-${pad2(m + 1)}">
+      <div class="due-cal-head">
+        <button type="button" class="btn btn-sm" data-due-month-shift="-1" aria-label="Previous month">‹</button>
+        <span class="due-cal-label">${monthLabel}</span>
+        <button type="button" class="btn btn-sm" data-due-month-shift="1" aria-label="Next month">›</button>
+      </div>
+      <div class="due-cal-weekdays">${weekdays}</div>
+      <div class="due-cal-grid">${cells}</div>
+    </div>
+  `;
+}
+
+function dueFieldsHTML(fromDate) {
+  const parts = localDateParts(fromDate);
+  return `
+    <fieldset class="field due-fields">
+      <legend>Due</legend>
+      ${dueCalendarHTML(parts.date, fromDate)}
+      <div class="due-chips" role="group" aria-label="Quick dates">
+        <button type="button" class="btn btn-sm" data-due-date="0">Today</button>
+        <button type="button" class="btn btn-sm" data-due-date="1">Tomorrow</button>
+        <button type="button" class="btn btn-sm" data-due-date="7">In a week</button>
+      </div>
+      <input id="r-due-date" type="date" value="${parts.date}" required>
+      <div class="due-time-block">
+        <label for="r-due-time">Time</label>
+        <div class="due-time-row">
+          <button type="button" class="btn btn-sm due-step" data-due-time-shift="-15" aria-label="15 minutes earlier">−15</button>
+          <input id="r-due-time" type="time" value="${parts.time}" required step="60">
+          <button type="button" class="btn btn-sm due-step" data-due-time-shift="15" aria-label="15 minutes later">+15</button>
+        </div>
+        <div class="due-chips" role="group" aria-label="Quick times">
+          <button type="button" class="btn btn-sm" data-due-time="09:00">9:00</button>
+          <button type="button" class="btn btn-sm" data-due-time="12:00">12:00</button>
+          <button type="button" class="btn btn-sm" data-due-time="18:00">18:00</button>
+          <button type="button" class="btn btn-sm" data-due-time="21:00">21:00</button>
+        </div>
+      </div>
+    </fieldset>
+  `;
+}
+
+function refreshDueCalendar(wrap) {
+  const dateEl = wrap.querySelector('#r-due-date');
+  const cal = wrap.querySelector('.due-cal');
+  if (!dateEl || !cal) return;
+  const selected = dateEl.value;
+  const monthStr = cal.dataset.dueMonth || selected;
+  const [y, m] = monthStr.split('-').map(Number);
+  const monthDate = selected && selected.startsWith(monthStr)
+    ? parseYMD(selected)
+    : new Date(y, (m || 1) - 1, 1);
+  cal.outerHTML = dueCalendarHTML(selected, monthDate);
+}
+
+function readDueLocal(root) {
+  const scope = root || document;
+  const date = scope.querySelector('#r-due-date')?.value;
+  const timeRaw = scope.querySelector('#r-due-time')?.value || '';
+  if (!date || !timeRaw) return '';
+  const time = timeRaw.slice(0, 5);
+  return `${date}T${time}`;
+}
+
+function shiftDueTime(timeEl, minutes) {
+  const [h, m] = (timeEl.value || '00:00').slice(0, 5).split(':').map(Number);
+  const d = new Date();
+  d.setHours(h || 0, (m || 0) + minutes, 0, 0);
+  timeEl.value = localDateParts(d).time;
+}
+
+function bindDueFields(root) {
+  const wrap = root.querySelector('.due-fields');
+  if (!wrap) return;
+  wrap.addEventListener('click', (e) => {
+    const dateEl = wrap.querySelector('#r-due-date');
+    const timeEl = wrap.querySelector('#r-due-time');
+    const pick = e.target.closest('[data-due-pick]');
+    if (pick) {
+      dateEl.value = pick.dataset.duePick;
+      refreshDueCalendar(wrap);
+      return;
+    }
+    const monthShift = e.target.closest('[data-due-month-shift]');
+    if (monthShift) {
+      const cal = wrap.querySelector('.due-cal');
+      const [y, m] = (cal.dataset.dueMonth || dateEl.value).split('-').map(Number);
+      const next = new Date(y, m - 1 + Number(monthShift.dataset.dueMonthShift), 1);
+      cal.dataset.dueMonth = `${next.getFullYear()}-${pad2(next.getMonth() + 1)}`;
+      refreshDueCalendar(wrap);
+      return;
+    }
+    const quickDate = e.target.closest('[data-due-date]');
+    if (quickDate) {
+      const d = new Date();
+      d.setDate(d.getDate() + Number(quickDate.dataset.dueDate));
+      dateEl.value = localDateParts(d).date;
+      const cal = wrap.querySelector('.due-cal');
+      cal.dataset.dueMonth = dateEl.value.slice(0, 7);
+      refreshDueCalendar(wrap);
+      return;
+    }
+    const quickTime = e.target.closest('[data-due-time]');
+    if (quickTime) {
+      timeEl.value = quickTime.dataset.dueTime;
+      return;
+    }
+    const timeShift = e.target.closest('[data-due-time-shift]');
+    if (timeShift) shiftDueTime(timeEl, Number(timeShift.dataset.dueTimeShift));
+  });
+  wrap.querySelector('#r-due-date').addEventListener('change', () => {
+    const cal = wrap.querySelector('.due-cal');
+    const v = wrap.querySelector('#r-due-date').value;
+    if (v) cal.dataset.dueMonth = v.slice(0, 7);
+    refreshDueCalendar(wrap);
+  });
 }
 
 initTheme();

@@ -1,5 +1,6 @@
 :root,
 [data-bs-theme="dark"] {
+  color-scheme: dark;
   --bg: #0f1219;
   --surface: #171b26;
   --surface-2: #1e2433;
@@ -30,6 +31,7 @@
 }
 
 [data-bs-theme="light"] {
+  color-scheme: light;
   --bg: #f4f6fa;
   --surface: #ffffff;
   --surface-2: #eef1f7;

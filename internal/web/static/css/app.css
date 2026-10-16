@@ -153,6 +153,81 @@ button, input, select, textarea { font: inherit; }
   border-color: var(--accent);
 }
 
+.due-fields { border: 0; padding: 0; margin: 0 0 14px; min-width: 0; }
+.due-fields legend {
+  padding: 0;
+  margin-bottom: 8px;
+  font-size: 0.875rem;
+  color: var(--text-2);
+}
+.due-cal {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  padding: 10px;
+  margin-bottom: 8px;
+}
+.due-cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.due-cal-label { font-weight: 600; font-size: 0.95rem; }
+.due-cal-weekdays,
+.due-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+.due-cal-weekdays {
+  margin-bottom: 4px;
+  color: var(--text-3);
+  font-size: 0.7rem;
+  text-align: center;
+}
+.due-cal-cell {
+  min-height: 34px;
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+}
+.due-cal-cell:hover { background: var(--accent-soft); }
+.due-cal-cell.due-cal-empty { visibility: hidden; cursor: default; }
+.due-cal-cell.due-cal-today { box-shadow: inset 0 0 0 1px var(--accent); }
+.due-cal-cell.due-cal-selected {
+  background: var(--accent);
+  color: #1a1200;
+  font-weight: 600;
+}
+.due-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+.due-fields #r-due-date { margin-bottom: 12px; }
+.due-time-block label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.875rem;
+  color: var(--text-2);
+}
+.due-time-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.due-time-row input { width: 100%; }
+.due-step { min-width: 48px; }
+
 .reminder-list { display: flex; flex-direction: column; gap: 10px; }
 .reminder-card {
   display: grid;

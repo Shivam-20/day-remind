@@ -130,10 +130,6 @@ function shellHTML(active, mainHTML) {
           ${shellNavHTML(active)}
         </nav>
         <div class="sidebar-footer">
-          <button type="button" class="btn btn-sm btn-with-icon" data-sidebar-toggle aria-expanded="${sidebarHidden ? 'false' : 'true'}" aria-label="${menuLabel}">
-            <span class="btn-icon" aria-hidden="true">${actionIconSVG(sidebarHidden ? 'menu' : 'panel')}</span>
-            <span class="btn-label">${menuLabel}</span>
-          </button>
           <button class="btn btn-sm" id="theme-toggle">Theme</button>
           <button class="btn btn-sm" id="logout-btn">Logout</button>
         </div>
@@ -445,18 +441,18 @@ async function renderVacationSettings() {
 function openCreateDrawer() {
   const defaultDue = new Date();
   defaultDue.setHours(defaultDue.getHours() + 1, 0, 0, 0);
-  const local = new Date(defaultDue.getTime() - defaultDue.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   const drawer = openDrawer('New reminder', `
     <div class="field"><label for="r-title">Title</label><input id="r-title" required></div>
     <div class="field"><label for="r-desc">Description</label><textarea id="r-desc" rows="3"></textarea></div>
-    <div class="field"><label for="r-due">Due</label><input id="r-due" type="datetime-local" value="${local}" required></div>
+    ${dueFieldsHTML(defaultDue)}
     <div class="field"><label for="r-priority">Priority</label>
       <select id="r-priority"><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option><option value="low">Low</option></select>
     </div>
   `, `<button class="btn" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" id="save-reminder">Save</button>`);
+  bindDueFields(drawer);
   drawer.querySelector('#save-reminder').addEventListener('click', async () => {
     const title = document.getElementById('r-title').value.trim();
-    const dueLocal = document.getElementById('r-due').value;
+    const dueLocal = readDueLocal(drawer);
     if (!title || !dueLocal) {
       showToast('Title and due date required', 'error');
       return;

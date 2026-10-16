@@ -724,7 +724,6 @@ async function openCreateDrawerEnhanced() {
   await loadListsAndTags().catch(() => {});
   const defaultDue = new Date();
   defaultDue.setHours(defaultDue.getHours() + 1, 0, 0, 0);
-  const local = new Date(defaultDue.getTime() - defaultDue.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   const listOpts = featureState.lists.map((l) => `<option value="${l.id}">${escapeHTML(l.name)}</option>`).join('');
   const tagChips = featureState.tags.map((t) =>
     `<label class="tag-chip"><input type="checkbox" name="tags" value="${t.id}"> ${escapeHTML(t.name)}</label>`
@@ -739,7 +738,7 @@ async function openCreateDrawerEnhanced() {
   const drawer = openDrawer('New reminder', `
     <div class="field"><label for="r-title">Title</label><input id="r-title" required></div>
     <div class="field"><label for="r-desc">Description</label><textarea id="r-desc" rows="3"></textarea></div>
-    <div class="field"><label for="r-due">Due</label><input id="r-due" type="datetime-local" value="${local}" required></div>
+    ${dueFieldsHTML(defaultDue)}
     <div class="field"><label for="r-priority">Priority</label>
       <select id="r-priority"><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option><option value="low">Low</option></select>
     </div>
@@ -748,10 +747,11 @@ async function openCreateDrawerEnhanced() {
     <div class="field"><label for="r-recur">Recurrence</label><select id="r-recur">${recurOpts}</select></div>
     <div class="field"><label>Remind before</label><div class="chip-row">${offsetChips}</div></div>
   `, `<button class="btn" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" id="save-reminder">Save</button>`);
+  bindDueFields(drawer);
   drawer.querySelector('[data-close-drawer]').addEventListener('click', closeDrawer);
   drawer.querySelector('#save-reminder').addEventListener('click', async () => {
     const title = document.getElementById('r-title').value.trim();
-    const dueLocal = document.getElementById('r-due').value;
+    const dueLocal = readDueLocal(drawer);
     if (!title || !dueLocal) {
       showToast('Title and due date required', 'error');
       return;
