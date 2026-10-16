@@ -160,6 +160,8 @@ var adminRoutes = []struct{ method, path string }{
 	{http.MethodPost, "/api/admin/settings/test"},
 	{http.MethodPut, "/api/admin/templates"},
 	{http.MethodPost, "/api/admin/templates/reset"},
+	{http.MethodGet, "/api/admin/mail-templates"},
+	{http.MethodPost, "/api/admin/mail-templates"},
 	{http.MethodGet, "/api/admin/deliveries"},
 }
 
@@ -461,6 +463,66 @@ func TestUserTemplatesInheritFromTheInstance(t *testing.T) {
 	}
 	if inherited["email_text"] != "instance text" {
 		t.Errorf("inherited text = %v", inherited["email_text"])
+	}
+}
+
+func TestMailTemplateCreateUseAndDelete(t *testing.T) {
+	h := newHarness(t, nil)
+	user := h.user(t)
+
+	status, body := h.do(t, user, http.MethodPost, "/api/me/mail-templates", map[string]any{
+		"name":                "Bills",
+		"email_subject":       "BILL {{.Title}}",
+		"email_html":          "<p>{{.Title}}</p>",
+		"email_css":           "p{color:teal}",
+		"email_text":          "text {{.Title}}",
+		"telegram_text":       "tg {{.Title}}",
+		"telegram_parse_mode": "plain",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("create = %d %s", status, body)
+	}
+	created := decode(t, body)
+	id, _ := created["id"].(string)
+	if id == "" || created["name"] != "Bills" {
+		t.Fatalf("create payload = %v", created)
+	}
+
+	status, body = h.do(t, user, http.MethodPost, "/api/me/templates/preview", map[string]any{
+		"email_html": "<p>{{.Title}}</p>",
+		"email_css":  "p{color:teal}",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("preview = %d %s", status, body)
+	}
+	due := decode(t, body)["due"].(map[string]any)
+	if !strings.Contains(due["html"].(string), "<style>p{color:teal}</style>") {
+		t.Errorf("preview HTML did not include the CSS: %v", due["html"])
+	}
+
+	status, body = h.do(t, user, http.MethodPost, "/api/me/mail-templates/"+id+"/use", map[string]any{})
+	if status != http.StatusOK {
+		t.Fatalf("use = %d %s", status, body)
+	}
+	used := decode(t, body)
+	if used["active_id"] != id {
+		t.Errorf("active_id = %v, want %s", used["active_id"], id)
+	}
+
+	own := decode(t, mustGet(t, h, user, "/api/me/templates"))["own"].(map[string]any)
+	if own["email_subject"] != "BILL {{.Title}}" || own["email_css"] != "p{color:teal}" {
+		t.Errorf("using a template did not copy the wording: %v", own)
+	}
+
+	if status, body = h.do(t, user, http.MethodDelete, "/api/me/mail-templates/"+id, nil); status != http.StatusNoContent {
+		t.Fatalf("delete = %d %s", status, body)
+	}
+	left := decode(t, mustGet(t, h, user, "/api/me/mail-templates"))
+	if left["active_id"] != "" {
+		t.Errorf("deleted template is still active: %v", left["active_id"])
+	}
+	if n := len(left["templates"].([]any)); n != 0 {
+		t.Errorf("library still has %d templates", n)
 	}
 }
 

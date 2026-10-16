@@ -281,6 +281,7 @@ func templatePayload(ts notify.TemplateSet) map[string]any {
 	return map[string]any{
 		"email_subject":       ts.EmailSubject,
 		"email_html":          ts.EmailHTML,
+		"email_css":           ts.EmailCSS,
 		"email_text":          ts.EmailText,
 		"telegram_text":       ts.TelegramText,
 		"telegram_parse_mode": ts.TelegramParseMode,
@@ -293,6 +294,7 @@ func decodeTemplateSet(w http.ResponseWriter, r *http.Request) (notify.TemplateS
 	var body struct {
 		EmailSubject      string `json:"email_subject"`
 		EmailHTML         string `json:"email_html"`
+		EmailCSS          string `json:"email_css"`
 		EmailText         string `json:"email_text"`
 		TelegramText      string `json:"telegram_text"`
 		TelegramParseMode string `json:"telegram_parse_mode"`
@@ -304,6 +306,7 @@ func decodeTemplateSet(w http.ResponseWriter, r *http.Request) (notify.TemplateS
 	ts := notify.TemplateSet{
 		EmailSubject:      body.EmailSubject,
 		EmailHTML:         body.EmailHTML,
+		EmailCSS:          body.EmailCSS,
 		EmailText:         body.EmailText,
 		TelegramText:      body.TelegramText,
 		TelegramParseMode: body.TelegramParseMode,

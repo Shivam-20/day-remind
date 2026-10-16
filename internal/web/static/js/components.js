@@ -87,6 +87,36 @@ function statusBadge(item) {
   return '';
 }
 
+function actionIconSVG(name) {
+  const s = 'xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
+  const icons = {
+    info: `<svg ${s}><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>`,
+    check: `<svg ${s}><path d="M20 6 9 17l-5-5"/></svg>`,
+    pause: `<svg ${s}><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`,
+    play: `<svg ${s}><polygon points="5 3 19 12 5 21 5 3"/></svg>`,
+    clock: `<svg ${s}><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>`,
+    sun: `<svg ${s}><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>`,
+    trash: `<svg ${s}><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
+    menu: `<svg ${s}><path d="M4 6h16M4 12h16M4 18h16"/></svg>`,
+    panel: `<svg ${s}><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>`,
+  };
+  return icons[name] || icons.info;
+}
+
+function reminderActionBtn({ action, id, label, icon, className = '', attrs = {} }) {
+  const dataAttrs = Object.entries(attrs)
+    .map(([k, v]) => ` data-${k}="${escapeHTML(String(v))}"`)
+    .join('');
+  return `<button type="button" class="btn btn-sm btn-with-icon${className ? ` ${className}` : ''}" data-action="${escapeHTML(action)}" data-id="${escapeHTML(id)}"${dataAttrs}><span class="btn-icon" aria-hidden="true">${actionIconSVG(icon)}</span><span class="btn-label">${escapeHTML(label)}</span></button>`;
+}
+
+function snoozeUntilTomorrow9am() {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  d.setHours(9, 0, 0, 0);
+  return d;
+}
+
 function reminderCardHTML(item, actionsHTML) {
   const paused = item.status === 'paused' ? ' is-paused' : '';
   return `
@@ -109,6 +139,43 @@ function escapeHTML(s) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+const SIDEBAR_HIDDEN_KEY = 'drSidebarHidden';
+
+function isSidebarHidden() {
+  return localStorage.getItem(SIDEBAR_HIDDEN_KEY) === '1';
+}
+
+function setSidebarHidden(hidden) {
+  localStorage.setItem(SIDEBAR_HIDDEN_KEY, hidden ? '1' : '0');
+  document.querySelectorAll('.layout').forEach((el) => {
+    el.classList.toggle('sidebar-hidden', hidden);
+  });
+  document.querySelectorAll('[data-sidebar-toggle]').forEach((btn) => {
+    const hide = isSidebarHidden();
+    btn.setAttribute('aria-expanded', hide ? 'false' : 'true');
+    const label = btn.querySelector('.btn-label');
+    if (label) label.textContent = hide ? 'Show menu' : 'Hide menu';
+    const icon = btn.querySelector('.btn-icon');
+    if (icon && btn.closest('.sidebar-footer')) {
+      icon.innerHTML = actionIconSVG(hide ? 'menu' : 'panel');
+    }
+  });
+}
+
+function toggleSidebarHidden() {
+  const layout = document.querySelector('.layout');
+  if (!layout) return;
+  if (window.matchMedia('(max-width: 768px)').matches) {
+    layout.classList.toggle('sidebar-visible-mobile');
+    const open = layout.classList.contains('sidebar-visible-mobile');
+    document.querySelectorAll('[data-sidebar-toggle]').forEach((btn) => {
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    return;
+  }
+  setSidebarHidden(!isSidebarHidden());
 }
 
 function initTheme() {

@@ -84,6 +84,8 @@ type User struct {
 	TelegramChatID           *int64
 	Delivery                 UserDelivery
 	Templates                notify.TemplateSet
+	MailTemplates            []MailTemplate
+	ActiveMailTemplateID     *uuid.UUID
 	CreatedAt                time.Time
 }
 
@@ -142,6 +144,8 @@ type userDoc struct {
 	Notify                   NotifyPrefs        `bson:"notify"`
 	Delivery                 UserDelivery       `bson:"delivery"`
 	Templates                notify.TemplateSet `bson:"templates"`
+	MailTemplates            []MailTemplate     `bson:"mail_templates,omitempty"`
+	ActiveMailTemplateID     *uuid.UUID         `bson:"active_mail_template_id,omitempty"`
 	TelegramChatID           *int64             `bson:"telegram_chat_id,omitempty"`
 	TelegramLinkCode         string             `bson:"telegram_link_code,omitempty"`
 	TelegramLinkExpiresAt    *time.Time         `bson:"telegram_link_expires_at,omitempty"`
@@ -164,6 +168,8 @@ func userFromDoc(doc userDoc) User {
 		TelegramChatID:           doc.TelegramChatID,
 		Delivery:                 UserDelivery{SMTP: doc.Delivery.SMTP.Normalize(), Telegram: doc.Delivery.Telegram},
 		Templates:                doc.Templates,
+		MailTemplates:            doc.MailTemplates,
+		ActiveMailTemplateID:     doc.ActiveMailTemplateID,
 		CreatedAt:                doc.CreatedAt,
 	}
 }

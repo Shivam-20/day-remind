@@ -30,6 +30,7 @@ const maxRendered = 256 << 10
 type TemplateSet struct {
 	EmailSubject      string `bson:"email_subject,omitempty"`
 	EmailHTML         string `bson:"email_html,omitempty"`
+	EmailCSS          string `bson:"email_css,omitempty"`
 	EmailText         string `bson:"email_text,omitempty"`
 	TelegramText      string `bson:"telegram_text,omitempty"`
 	TelegramParseMode string `bson:"telegram_parse_mode,omitempty"`
@@ -131,6 +132,9 @@ func Merge(sets ...TemplateSet) TemplateSet {
 		if v := strings.TrimSpace(s.EmailHTML); v != "" {
 			out.EmailHTML = s.EmailHTML
 		}
+		if v := strings.TrimSpace(s.EmailCSS); v != "" {
+			out.EmailCSS = s.EmailCSS
+		}
 		if v := strings.TrimSpace(s.EmailText); v != "" {
 			out.EmailText = s.EmailText
 		}
@@ -175,6 +179,7 @@ func Validate(ts TemplateSet) []FieldError {
 	}
 	check("email_subject", ts.EmailSubject, false)
 	check("email_html", ts.EmailHTML, true)
+	check("email_css", ts.EmailCSS, false)
 	check("email_text", ts.EmailText, false)
 	check("telegram_text", ts.TelegramText, false)
 
@@ -271,9 +276,14 @@ func Render(ts TemplateSet, m Message) (Rendered, []error) {
 		tgData = escapeData(data)
 	}
 
+	html := render("email_html", effective.EmailHTML, def.EmailHTML, true, data)
+	css := ""
+	if strings.TrimSpace(effective.EmailCSS) != "" {
+		css = render("email_css", effective.EmailCSS, "", false, data)
+	}
 	out := Rendered{
 		Subject:       strings.TrimSpace(render("email_subject", effective.EmailSubject, def.EmailSubject, false, data)),
-		HTML:          render("email_html", effective.EmailHTML, def.EmailHTML, true, data),
+		HTML:          injectCSS(html, css),
 		Telegram:      strings.TrimSpace(render("telegram_text", effective.TelegramText, def.TelegramText, false, tgData)),
 		TelegramPlain: plain,
 	}
@@ -327,12 +337,38 @@ func (c *cappedWriter) Write(p []byte) (int, error) {
 
 // Go's regexp has no backreferences, so script and style need one pattern each.
 var (
-	reScript = regexp.MustCompile(`(?is)<script\b[^>]*>.*?</\s*script\s*>`)
-	reStyle  = regexp.MustCompile(`(?is)<style\b[^>]*>.*?</\s*style\s*>`)
-	reBreak  = regexp.MustCompile(`(?i)<(br\s*/?|/p|/div|/tr|/h[1-6])\s*>`)
-	reTag    = regexp.MustCompile(`(?s)<[^>]*>`)
-	reBlank  = regexp.MustCompile(`\n{3,}`)
+	reScript     = regexp.MustCompile(`(?is)<script\b[^>]*>.*?</\s*script\s*>`)
+	reScriptOpen = regexp.MustCompile(`(?i)<\s*/?\s*script\b[^>]*>`)
+	reStyleClose = regexp.MustCompile(`(?i)</\s*style\s*>`)
+	reStyle      = regexp.MustCompile(`(?is)<style\b[^>]*>.*?</\s*style\s*>`)
+	reBreak      = regexp.MustCompile(`(?i)<(br\s*/?|/p|/div|/tr|/h[1-6])\s*>`)
+	reTag        = regexp.MustCompile(`(?s)<[^>]*>`)
+	reBlank      = regexp.MustCompile(`\n{3,}`)
 )
+
+// injectCSS puts a rendered stylesheet into the HTML document. Email clients
+// that honor a head style block pick it up; authors who prefer inline styles
+// can still put them in the HTML itself.
+func injectCSS(html, css string) string {
+	css = sanitizeCSS(css)
+	if strings.TrimSpace(css) == "" {
+		return html
+	}
+	block := "<style>" + css + "</style>"
+	if i := strings.Index(strings.ToLower(html), "</head>"); i >= 0 {
+		return html[:i] + block + html[i:]
+	}
+	return block + html
+}
+
+// sanitizeCSS keeps a stylesheet from closing its own style element or
+// smuggling a script tag into the message.
+func sanitizeCSS(css string) string {
+	css = reScript.ReplaceAllString(css, "")
+	css = reScriptOpen.ReplaceAllString(css, "")
+	css = reStyleClose.ReplaceAllString(css, "")
+	return css
+}
 
 // htmlToText derives a readable plain-text alternative from a rendered HTML
 // body. It is a fallback for authors who clear the text template, not a general

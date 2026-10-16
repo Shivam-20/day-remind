@@ -233,6 +233,35 @@ func TestOversizedOutputFallsBack(t *testing.T) {
 	}
 }
 
+func TestEmailCSSIsInjectedAndCannotBreakOut(t *testing.T) {
+	html := `<html><head><title>n</title></head><body><h1>{{.Title}}</h1></body></html>`
+	css := `h1{color:{{if .Advance}}red{{else}}blue{{end}}}</style><script>alert(1)</script>p{margin:0}`
+	out, problems := Render(TemplateSet{EmailHTML: html, EmailCSS: css}, dueMessage())
+	if len(problems) != 0 {
+		t.Fatalf("problems: %v", problems)
+	}
+	if !strings.Contains(out.HTML, "<style>h1{color:blue}p{margin:0}</style></head>") {
+		t.Errorf("CSS was not injected before </head>:\n%s", out.HTML)
+	}
+	if strings.Contains(strings.ToLower(out.HTML), "<script") || strings.Count(strings.ToLower(out.HTML), "</style>") != 1 {
+		t.Errorf("stylesheet broke out of the style block:\n%s", out.HTML)
+	}
+	if strings.Contains(out.Text, "color:blue") {
+		t.Errorf("plain text should not include the stylesheet:\n%s", out.Text)
+	}
+
+	bare, problems := Render(TemplateSet{
+		EmailHTML: `<p>{{.Title}}</p>`,
+		EmailCSS:  `p{color:green}`,
+	}, dueMessage())
+	if len(problems) != 0 {
+		t.Fatalf("problems: %v", problems)
+	}
+	if !strings.HasPrefix(bare.HTML, "<style>p{color:green}</style><p>") {
+		t.Errorf("CSS should be prepended when there is no head:\n%s", bare.HTML)
+	}
+}
+
 func TestSampleMessageRendersBothKinds(t *testing.T) {
 	for _, advance := range []bool{false, true} {
 		out, problems := Render(TemplateSet{}, SampleMessage(advance))

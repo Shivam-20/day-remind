@@ -98,29 +98,35 @@ func (t TelegramSettings) Complete() bool {
 // InstanceSettings is the singleton configuration an admin edits. It is the
 // authoritative source once written; environment variables only seed it.
 type InstanceSettings struct {
-	SMTP      SMTPSettings
-	Telegram  TelegramSettings
-	Templates notify.TemplateSet
-	UpdatedAt time.Time
-	UpdatedBy uuid.UUID
+	SMTP                 SMTPSettings
+	Telegram             TelegramSettings
+	Templates            notify.TemplateSet
+	MailTemplates        []MailTemplate
+	ActiveMailTemplateID *uuid.UUID
+	UpdatedAt            time.Time
+	UpdatedBy            uuid.UUID
 }
 
 type instanceSettingsDoc struct {
-	ID        string             `bson:"_id"`
-	SMTP      SMTPSettings       `bson:"smtp"`
-	Telegram  TelegramSettings   `bson:"telegram"`
-	Templates notify.TemplateSet `bson:"templates"`
-	UpdatedAt time.Time          `bson:"updated_at"`
-	UpdatedBy uuid.UUID          `bson:"updated_by,omitempty"`
+	ID                   string             `bson:"_id"`
+	SMTP                 SMTPSettings       `bson:"smtp"`
+	Telegram             TelegramSettings   `bson:"telegram"`
+	Templates            notify.TemplateSet `bson:"templates"`
+	MailTemplates        []MailTemplate     `bson:"mail_templates,omitempty"`
+	ActiveMailTemplateID *uuid.UUID         `bson:"active_mail_template_id,omitempty"`
+	UpdatedAt            time.Time          `bson:"updated_at"`
+	UpdatedBy            uuid.UUID          `bson:"updated_by,omitempty"`
 }
 
 func instanceFromDoc(d instanceSettingsDoc) InstanceSettings {
 	return InstanceSettings{
-		SMTP:      d.SMTP.Normalize(),
-		Telegram:  d.Telegram,
-		Templates: d.Templates,
-		UpdatedAt: d.UpdatedAt,
-		UpdatedBy: d.UpdatedBy,
+		SMTP:                 d.SMTP.Normalize(),
+		Telegram:             d.Telegram,
+		Templates:            d.Templates,
+		MailTemplates:        d.MailTemplates,
+		ActiveMailTemplateID: d.ActiveMailTemplateID,
+		UpdatedAt:            d.UpdatedAt,
+		UpdatedBy:            d.UpdatedBy,
 	}
 }
 
@@ -147,12 +153,14 @@ func (db *DB) SaveInstanceSettings(ctx context.Context, s InstanceSettings, acto
 		return fmt.Errorf("%w: template %s", ErrInvalid, errs[0].Error())
 	}
 	doc := instanceSettingsDoc{
-		ID:        instanceSettingsID,
-		SMTP:      s.SMTP.Normalize(),
-		Telegram:  s.Telegram,
-		Templates: s.Templates,
-		UpdatedAt: time.Now().UTC(),
-		UpdatedBy: actor,
+		ID:                   instanceSettingsID,
+		SMTP:                 s.SMTP.Normalize(),
+		Telegram:             s.Telegram,
+		Templates:            s.Templates,
+		MailTemplates:        s.MailTemplates,
+		ActiveMailTemplateID: s.ActiveMailTemplateID,
+		UpdatedAt:            time.Now().UTC(),
+		UpdatedBy:            actor,
 	}
 	_, err := db.collection("settings").ReplaceOne(ctx,
 		bson.M{"_id": instanceSettingsID}, doc, options.Replace().SetUpsert(true))

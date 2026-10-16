@@ -11,7 +11,9 @@ const routes = {
   '/settings/vacation': renderVacationSettings,
   '/settings/notifications': renderNotificationSettings,
   '/settings/templates': renderMyTemplates,
+  '/settings/wording': renderMessageWording,
   '/admin': renderAdmin,
+  ...(window.DR_FEATURE_ROUTES || {}),
 };
 
 function isAdmin() {
@@ -94,21 +96,40 @@ function renderAuth(signup) {
   };
 }
 
+function shellNavHTML(active) {
+  const feature = window.DR_FEATURE_ROUTES || {};
+  const links = [
+    { href: '#/today', path: '/today', label: 'Today' },
+    ...(feature['/calendar'] ? [{ href: '#/calendar', path: '/calendar', label: 'Calendar' }] : []),
+    { href: '#/reminders', path: '/reminders', label: 'All reminders' },
+    ...(feature['/lists'] ? [{ href: '#/lists', path: '/lists', label: 'Lists' }] : []),
+    { href: '#/settings', path: '/settings', label: 'Settings', match: (p) => p.startsWith('/settings') },
+    ...(isAdmin() ? [{ href: '#/admin', path: '/admin', label: 'Admin' }] : []),
+  ];
+  return links.map((l) => {
+    const on = l.match ? l.match(active) : active === l.path;
+    return `<a href="${l.href}" class="${on ? 'active' : ''}">${l.label}</a>`;
+  }).join('');
+}
+
 function shellHTML(active, mainHTML) {
   const vacation = state.user?.notifications_paused
     ? `<div class="vacation-banner"><span>Notifications paused${state.user.notifications_paused_until ? ' until ' + new Date(state.user.notifications_paused_until).toLocaleString() : ''}</span><button class="btn btn-sm" id="resume-vacation">Resume</button></div>`
     : '';
+  const sidebarHidden = isSidebarHidden();
+  const menuLabel = sidebarHidden ? 'Show menu' : 'Hide menu';
   return `
-    <div class="layout">
-      <aside class="sidebar">
+    <div class="layout${sidebarHidden ? ' sidebar-hidden' : ''}">
+      <aside class="sidebar" aria-label="Main navigation">
         <div class="brand"><span>Day</span> Remind</div>
         <nav class="nav">
-          <a href="#/today" class="${active === '/today' ? 'active' : ''}">Today</a>
-          <a href="#/reminders" class="${active === '/reminders' ? 'active' : ''}">All reminders</a>
-          <a href="#/settings" class="${active.startsWith('/settings') ? 'active' : ''}">Settings</a>
-          ${isAdmin() ? `<a href="#/admin" class="${active === '/admin' ? 'active' : ''}">Admin</a>` : ''}
+          ${shellNavHTML(active)}
         </nav>
         <div class="sidebar-footer">
+          <button type="button" class="btn btn-sm btn-with-icon" data-sidebar-toggle aria-expanded="${sidebarHidden ? 'false' : 'true'}" aria-label="${menuLabel}">
+            <span class="btn-icon" aria-hidden="true">${actionIconSVG(sidebarHidden ? 'menu' : 'panel')}</span>
+            <span class="btn-label">${menuLabel}</span>
+          </button>
           <button class="btn btn-sm" id="theme-toggle">Theme</button>
           <button class="btn btn-sm" id="logout-btn">Logout</button>
         </div>
@@ -116,8 +137,13 @@ function shellHTML(active, mainHTML) {
       <div class="main">
         ${vacation}
         <header class="topbar">
-          <strong>${escapeHTML(state.user?.display_name || state.user?.email || 'Day Remind')}</strong>
-          ${isAdmin() ? '<span class="badge badge-admin">Admin</span>' : ''}
+          <div class="topbar-start">
+            <button type="button" class="btn btn-ghost btn-sm btn-with-icon sidebar-top-toggle" data-sidebar-toggle aria-expanded="${sidebarHidden ? 'false' : 'true'}" aria-label="${menuLabel}">
+              <span class="btn-icon" aria-hidden="true">${actionIconSVG('menu')}</span>
+            </button>
+            <strong>${escapeHTML(state.user?.display_name || state.user?.email || 'Day Remind')}</strong>
+            ${isAdmin() ? '<span class="badge badge-admin">Admin</span>' : ''}
+          </div>
           <button class="btn btn-primary btn-sm" id="add-reminder-top">+ Add</button>
         </header>
         <main id="main" class="page">${mainHTML}</main>
@@ -134,6 +160,15 @@ function shellHTML(active, mainHTML) {
 }
 
 function bindShell(active) {
+  document.querySelectorAll('[data-sidebar-toggle]').forEach((btn) => {
+    btn.addEventListener('click', toggleSidebarHidden);
+  });
+  document.querySelectorAll('.layout .nav a').forEach((link) => {
+    link.addEventListener('click', () => {
+      document.querySelector('.layout')?.classList.remove('sidebar-visible-mobile');
+    });
+  });
+  setSidebarHidden(isSidebarHidden());
   document.getElementById('theme-toggle')?.addEventListener('click', toggleTheme);
   document.getElementById('logout-btn')?.addEventListener('click', async () => {
     try {
@@ -163,11 +198,20 @@ async function renderApp(route) {
     location.hash = '#/today';
     return renderToday();
   }
-  const fn = routes[route] || routes['/today'];
-  if (!routes[route] && route.startsWith('/settings')) {
+  if (route.startsWith('/settings')) {
+    const feature = (window.DR_FEATURE_ROUTES || {})[route];
+    if (feature && route !== '/settings') {
+      await feature(route);
+      return;
+    }
+    if (routes[route]) {
+      await routes[route](route);
+      return;
+    }
     await renderSettings(route);
     return;
   }
+  const fn = routes[route] || routes['/today'];
   await fn(route);
 }
 
@@ -179,15 +223,22 @@ async function loadReminders(params = '') {
 
 function reminderActions(item) {
   const btns = [];
-  if (item.status !== 'done') {
-    btns.push(`<button class="btn btn-sm" data-action="done" data-id="${item.id}">Done</button>`);
+  btns.push(reminderActionBtn({ action: 'detail', id: item.id, label: 'Details', icon: 'info' }));
+  const active = item.status !== 'done' && item.status !== 'cancelled';
+  if (active) {
+    btns.push(reminderActionBtn({ action: 'done', id: item.id, label: 'Done', icon: 'check' }));
   }
   if (item.status === 'paused') {
-    btns.push(`<button class="btn btn-sm" data-action="resume" data-id="${item.id}">Resume</button>`);
+    btns.push(reminderActionBtn({ action: 'resume', id: item.id, label: 'Resume', icon: 'play' }));
   } else if (item.status === 'scheduled') {
-    btns.push(`<button class="btn btn-sm" data-action="pause" data-id="${item.id}">Pause</button>`);
+    btns.push(reminderActionBtn({ action: 'pause', id: item.id, label: 'Pause', icon: 'pause' }));
   }
-  btns.push(`<button class="btn btn-sm btn-danger" data-action="delete" data-id="${item.id}">Delete</button>`);
+  if (active) {
+    btns.push(reminderActionBtn({ action: 'snooze', id: item.id, label: '+15m', icon: 'clock', attrs: { 'snooze-minutes': '15' } }));
+    btns.push(reminderActionBtn({ action: 'snooze', id: item.id, label: '+1h', icon: 'clock', attrs: { 'snooze-minutes': '60' } }));
+    btns.push(reminderActionBtn({ action: 'snooze', id: item.id, label: 'Tomorrow', icon: 'sun', attrs: { snooze: 'tomorrow9' } }));
+  }
+  btns.push(reminderActionBtn({ action: 'delete', id: item.id, label: 'Delete', icon: 'trash', className: 'btn-danger' }));
   return btns.join('');
 }
 
@@ -197,9 +248,32 @@ function bindReminderActions(container, rerender) {
       const id = btn.dataset.id;
       const action = btn.dataset.action;
       try {
+        if (action === 'detail') {
+          const open = window.openReminderDrawer;
+          if (typeof open === 'function') {
+            await open(id);
+          } else {
+            showToast('Details not available', 'error');
+          }
+          return;
+        }
         if (action === 'done') await API.post(`/api/reminders/${id}/done`);
         if (action === 'pause') await API.post(`/api/reminders/${id}/pause`);
         if (action === 'resume') await API.post(`/api/reminders/${id}/resume`);
+        if (action === 'snooze') {
+          let until;
+          if (btn.dataset.snooze === 'tomorrow9') {
+            until = snoozeUntilTomorrow9am();
+          } else {
+            const mins = parseInt(btn.dataset.snoozeMinutes, 10);
+            if (!mins) {
+              showToast('Invalid snooze', 'error');
+              return;
+            }
+            until = new Date(Date.now() + mins * 60 * 1000);
+          }
+          await API.post(`/api/reminders/${id}/snooze`, { until: until.toISOString() });
+        }
         if (action === 'delete') {
           if (!confirm('Delete this reminder?')) return;
           await API.delete(`/api/reminders/${id}`);
@@ -241,14 +315,13 @@ async function renderToday() {
     ${overdue.length ? `<h2 style="font-size:1rem;color:var(--danger)">Overdue</h2><div class="reminder-list">${overdue.map((r) => reminderCardHTML(r, reminderActions(r))).join('')}</div>` : ''}
     <h2 style="font-size:1rem;margin-top:24px">Today</h2>
     <div class="reminder-list" id="today-list">
-      ${today.length ? today.map((r) => reminderCardHTML(r, reminderActions(r))).join('') : emptyState('Nothing scheduled today', 'Tap + to add a reminder.', '<button class="btn btn-primary" id="empty-add">Add reminder</button>')}
+      ${today.length ? today.map((r) => reminderCardHTML(r, reminderActions(r))).join('') : ''}
     </div>
     ${upcoming.length ? `<h2 style="font-size:1rem;margin-top:24px">Upcoming</h2><div class="reminder-list">${upcoming.map((r) => reminderCardHTML(r, reminderActions(r))).join('')}</div>` : ''}
   `;
   document.getElementById('app').innerHTML = shellHTML('/today', main);
   bindShell('/today');
   bindReminderActions(document.getElementById('app'), () => renderToday());
-  document.getElementById('empty-add')?.addEventListener('click', openCreateDrawer);
 }
 
 async function renderReminders() {
@@ -297,7 +370,7 @@ async function renderSettings(route = '/settings') {
         <h3>Notifications</h3>
         <p>Email and Telegram delivery, plus how far ahead to warn you.</p>
       </div>
-      <div class="card settings-card" data-href="#/settings/templates">
+      <div class="card settings-card" data-href="#/settings/wording">
         <h3>Message wording</h3>
         <p>Customise how your reminders read, or keep the defaults.</p>
       </div>
@@ -1083,12 +1156,32 @@ async function loadAdminDeliveryLog() {
 const TEMPLATE_FIELDS = [
   ['email_subject', 'Email subject', 'input'],
   ['email_html', 'Email body (HTML)', 'code'],
+  ['email_css', 'Email CSS', 'code'],
   ['email_text', 'Email body (plain text)', 'code'],
   ['telegram_text', 'Telegram message', 'code'],
 ];
 
+function templateFieldHTML(key, label, kind, values) {
+  const rows = key === 'email_html' || key === 'email_css' ? 14 : 7;
+  return `
+    <div class="field">
+      <label for="t-${key}">${escapeHTML(label)}</label>
+      ${kind === 'input'
+        ? `<input id="t-${key}" value="${escapeHTML(values[key] || '')}">`
+        : `<textarea id="t-${key}" rows="${rows}" spellcheck="false">${escapeHTML(values[key] || '')}</textarea>`}
+    </div>`;
+}
+
 function templateEditorHTML(values, opts = {}) {
   const hint = opts.inheritHint || 'Leave a field blank to use the default.';
+  const name = opts.nameField ? `
+    <div class="field">
+      <label for="t-name">Name</label>
+      <input id="t-name" value="${escapeHTML(values.name || '')}" maxlength="80">
+    </div>` : '';
+  const rest = TEMPLATE_FIELDS
+    .filter(([key]) => key !== 'email_subject' && key !== 'email_html' && key !== 'email_css')
+    .map(([key, label, kind]) => templateFieldHTML(key, label, kind, values)).join('');
   return `
     <p class="channel-sub">${escapeHTML(hint)}</p>
     <details class="var-ref">
@@ -1096,13 +1189,13 @@ function templateEditorHTML(values, opts = {}) {
       <ul>${(opts.variables || []).map((v) =>
         `<li><code>{{${escapeHTML(v.Name)}}}</code> — ${escapeHTML(v.Description)}</li>`).join('')}</ul>
     </details>
-    ${TEMPLATE_FIELDS.map(([key, label, kind]) => `
-      <div class="field">
-        <label for="t-${key}">${escapeHTML(label)}</label>
-        ${kind === 'input'
-          ? `<input id="t-${key}" value="${escapeHTML(values[key] || '')}">`
-          : `<textarea id="t-${key}" rows="${key === 'email_html' ? 14 : 7}" spellcheck="false">${escapeHTML(values[key] || '')}</textarea>`}
-      </div>`).join('')}
+    ${name}
+    ${templateFieldHTML('email_subject', 'Email subject', 'input', values)}
+    <div class="mail-design">
+      ${templateFieldHTML('email_html', 'Email body (HTML)', 'code', values)}
+      ${templateFieldHTML('email_css', 'Email CSS', 'code', values)}
+    </div>
+    ${rest}
     <div class="field">
       <label for="t-telegram_parse_mode">Telegram formatting</label>
       <select id="t-telegram_parse_mode">
@@ -1116,7 +1209,110 @@ function readTemplateEditor() {
   const out = {};
   for (const [key] of TEMPLATE_FIELDS) out[key] = document.getElementById('t-' + key).value;
   out.telegram_parse_mode = document.getElementById('t-telegram_parse_mode').value;
+  const name = document.getElementById('t-name');
+  if (name) out.name = name.value;
   return out;
+}
+
+let mailEditor = null;
+
+function mailAPI(scope) {
+  return scope === 'admin' ? '/api/admin/mail-templates' : '/api/me/mail-templates';
+}
+
+function mailPreviewAPI(scope) {
+  return scope === 'admin' ? '/api/admin/templates/preview' : '/api/me/templates/preview';
+}
+
+const MAIL_AI_PROMPT = `You are designing a reminder notification template for Day Remind.
+Return ONLY valid JSON (no markdown code fences, no commentary) with exactly these keys:
+"name", "email_subject", "email_html", "email_css", "email_text", "telegram_text"
+
+Use Go text/template actions for dynamic content (not your own placeholder syntax):
+{{.Title}}, {{.Description}}, {{.DueAt}}, {{.Timezone}}, {{.Priority}}, {{.Advance}}, {{.LeadTime}}
+Use {{if .Advance}}...{{else}}...{{end}} where the wording should differ for an early warning vs the due notice.
+
+Rules:
+- email_html: HTML for the email body (fragment or full document).
+- email_css: CSS rules only — no <style> wrapper, no <script>.
+- email_text: plain-text alternative for mail clients that skip HTML.
+- telegram_text: Telegram message body (plain text is safest).
+- name: short label for the template, e.g. "Friendly bill reminder".
+
+Sample data: Title "Pay electricity bill", Description "Account 12345", Priority "high", DueAt like "Thu, 25 Dec 2026 09:00 IST".`;
+
+let mailPasteOpen = false;
+
+function mailPayloadFromTemplate(t) {
+  return {
+    email_subject: t.email_subject || '',
+    email_html: t.email_html || '',
+    email_css: t.email_css || '',
+    email_text: t.email_text || '',
+    telegram_text: t.telegram_text || '',
+    telegram_parse_mode: t.telegram_parse_mode || 'markdownv2',
+  };
+}
+
+function mailPreviewAsInboxHTML(res) {
+  return ['due', 'advance'].map((kind) => {
+    const p = res[kind] || {};
+    const label = kind === 'due' ? 'At the due time' : 'Advance notice';
+    return `
+      <div class="card channel-card mail-preview-card">
+        <h3>View as mail — ${label}</h3>
+        ${(p.warnings || []).map((w) => `<p class="test-result bad">${escapeHTML(w)}</p>`).join('')}
+        <div class="mail-preview-inbox">
+          <span class="mail-preview-from">Day Remind</span>
+          <p class="mail-preview-subject">${escapeHTML(p.subject || '(no subject)')}</p>
+        </div>
+        <iframe class="preview-frame mail-preview-frame" sandbox srcdoc="${escapeHTML(p.html || '')}" title="Email preview"></iframe>
+        <p class="preview-label">Plain text alternative</p>
+        <pre class="preview-pre">${escapeHTML(p.text || '')}</pre>
+      </div>`;
+  }).join('');
+}
+
+async function copyMailAIPrompt() {
+  try {
+    await navigator.clipboard.writeText(MAIL_AI_PROMPT);
+    showToast('AI prompt copied');
+  } catch {
+    showToast('Could not copy — check browser permissions', 'error');
+  }
+}
+
+function parseMailAIResult(raw) {
+  let text = raw.trim();
+  const fence = text.match(/^```(?:json)?\s*([\s\S]*?)```$/i);
+  if (fence) text = fence[1].trim();
+  const data = JSON.parse(text);
+  const keys = ['name', 'email_subject', 'email_html', 'email_css', 'email_text', 'telegram_text'];
+  const out = {};
+  for (const k of keys) {
+    if (data[k] != null) out[k] = String(data[k]);
+  }
+  if (!out.name) out.name = 'AI template';
+  out.telegram_parse_mode = 'plain';
+  return out;
+}
+
+function mailTemplateCards(templates, editorOpen) {
+  if (!templates.length) {
+    if (editorOpen) return '';
+    return emptyState('No mail templates yet', 'Add one to design the email with HTML and CSS, and to write the message.', '');
+  }
+  return `<div class="template-grid">${templates.map((t) => `
+    <article class="card template-card">
+      <h3>${escapeHTML(t.name)}${t.active ? ' <span class="badge">In use</span>' : ''}</h3>
+      <p class="page-sub">${escapeHTML(t.email_subject || 'Default subject')}</p>
+      <div class="settings-actions">
+        <button class="btn btn-sm btn-primary" data-use-mail="${t.id}"${t.active ? ' disabled' : ''}>Use</button>
+        <button class="btn btn-sm" data-view-mail="${t.id}">View as mail</button>
+        <button class="btn btn-sm" data-edit-mail="${t.id}">Edit</button>
+        <button class="btn btn-sm btn-danger" data-delete-mail="${t.id}">Delete</button>
+      </div>
+    </article>`).join('')}</div>`;
 }
 
 async function renderAdminTemplates() {
@@ -1128,29 +1324,15 @@ async function renderAdminTemplates() {
     return;
   }
   adminState.settings = cfg;
-
-  const body = `
-    <div class="card channel-card">
-      <h3>Instance templates</h3>
-      ${templateEditorHTML(cfg.templates, {
-        variables: cfg.variables,
-        inheritHint: 'These apply to everyone who has not written their own. Leave a field blank to use the built-in default.',
-      })}
-      <div class="settings-actions">
-        <button class="btn btn-primary" id="t-save">Save templates</button>
-        <button class="btn" id="t-preview">Preview</button>
-        <button class="btn btn-danger" id="t-reset">Reset to defaults</button>
-      </div>
-    </div>
-    <div id="t-preview-out"></div>
-  `;
-  adminShell(body, 'Notification templates');
-  bindTemplateEditor({
-    save: (vals) => API.request('/api/admin/templates', { method: 'PUT', body: JSON.stringify(vals) }),
-    preview: (vals) => API.post('/api/admin/templates/preview', vals),
-    reset: () => API.post('/api/admin/templates/reset'),
-    after: renderAdminTemplates,
-  });
+  let lib;
+  try {
+    lib = await API.get('/api/admin/mail-templates');
+  } catch (err) {
+    adminShell(emptyState('Could not load templates', escapeHTML(err.message)), 'Notification templates');
+    return;
+  }
+  adminShell(mailLibraryHTML(lib, cfg.variables, 'admin'), 'Notification templates');
+  bindMailLibrary('admin', renderAdminTemplates);
 }
 
 // bindTemplateEditor is shared by the admin and per-user editors: the only
@@ -1257,10 +1439,207 @@ function bindOwnServerForms() {
   });
 }
 
+function mailLibraryHTML(lib, variables, scope) {
+  const templates = lib.templates || [];
+  const editing = mailEditor && mailEditor.scope === scope;
+  const hint = scope === 'admin'
+    ? 'These designs are for the whole instance. Use one to make it the wording everyone inherits. Leave a field blank to keep the built-in default.'
+    : 'Leave a field blank to keep what the instance already provides. Use a template to send your reminders with it.';
+  const form = editing ? `
+    <div class="card channel-card">
+      <h3>${mailEditor.mode === 'add' ? 'New mail template' : 'Edit mail template'}</h3>
+      ${templateEditorHTML(mailEditor.values, { variables, nameField: true, inheritHint: hint })}
+      <div class="settings-actions">
+        <button class="btn btn-primary" id="t-save">${mailEditor.mode === 'add' ? 'Add template' : 'Save template'}</button>
+        <button class="btn" id="t-view-mail">View as mail</button>
+        <button class="btn" id="t-preview">Preview</button>
+        <button class="btn" id="t-cancel">Cancel</button>
+      </div>
+    </div>
+    <div id="t-preview-out"></div>` : '';
+  const pasteBox = mailPasteOpen ? `
+    <div class="card channel-card" id="mail-paste-box">
+      <h3>Paste AI result</h3>
+      <p class="channel-sub">Paste the JSON from your AI assistant, then fill the form.</p>
+      <div class="field"><textarea id="mail-paste-json" rows="10" spellcheck="false" placeholder='{"name":"…","email_subject":"…",…}'></textarea></div>
+      <div class="settings-actions">
+        <button class="btn btn-primary" id="mail-paste-apply">Fill form</button>
+        <button class="btn" id="mail-paste-cancel">Cancel</button>
+      </div>
+    </div>` : '';
+  return `
+    <div class="settings-actions" style="margin-bottom:16px;flex-wrap:wrap">
+      <button class="btn btn-primary" id="mail-add">Add template</button>
+      <button class="btn" id="mail-copy-prompt" type="button">Copy AI prompt</button>
+      <button class="btn" id="mail-paste-open" type="button">Paste AI result</button>
+    </div>
+    ${pasteBox}
+    ${mailTemplateCards(templates, !!editing || mailPasteOpen)}
+    ${form}
+    <div id="mail-view-out"></div>
+  `;
+}
+
+function bindMailLibrary(scope, after) {
+  const base = mailAPI(scope);
+  const previewAPI = mailPreviewAPI(scope);
+
+  async function showViewAsMail(payload) {
+    const out = document.getElementById('mail-view-out') || document.getElementById('t-preview-out');
+    if (!out) return;
+    out.innerHTML = '<p class="page-sub">Loading preview…</p>';
+    try {
+      const res = await API.post(previewAPI, payload);
+      out.innerHTML = mailPreviewAsInboxHTML(res);
+      out.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (err) {
+      out.innerHTML = `<p class="test-result bad">${escapeHTML(err.message)}</p>`;
+    }
+  }
+
+  document.getElementById('mail-copy-prompt')?.addEventListener('click', () => copyMailAIPrompt());
+  document.getElementById('mail-paste-open')?.addEventListener('click', () => {
+    mailPasteOpen = true;
+    if (!mailEditor) mailEditor = { scope, mode: 'add', values: { telegram_parse_mode: 'markdownv2' } };
+    after();
+  });
+  document.getElementById('mail-paste-cancel')?.addEventListener('click', () => {
+    mailPasteOpen = false;
+    after();
+  });
+  document.getElementById('mail-paste-apply')?.addEventListener('click', () => {
+    const raw = document.getElementById('mail-paste-json')?.value || '';
+    try {
+      const vals = parseMailAIResult(raw);
+      mailEditor = { scope, mode: 'add', values: vals };
+      mailPasteOpen = false;
+      showToast('Form filled — review and save');
+      after();
+    } catch {
+      showToast('Invalid JSON — check the AI response', 'error');
+    }
+  });
+
+  document.getElementById('mail-add')?.addEventListener('click', () => {
+    mailEditor = { scope, mode: 'add', values: { telegram_parse_mode: 'markdownv2' } };
+    mailPasteOpen = false;
+    after();
+  });
+  document.querySelectorAll('[data-edit-mail]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        const lib = await API.get(base);
+        const found = (lib.templates || []).find((t) => t.id === btn.dataset.editMail);
+        if (!found) {
+          showToast('That template is gone', 'error');
+          return;
+        }
+        mailEditor = { scope, mode: 'edit', id: found.id, values: found };
+        after();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  });
+  document.querySelectorAll('[data-use-mail]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        await API.post(`${base}/${btn.dataset.useMail}/use`);
+        showToast('Template in use');
+        mailEditor = null;
+        after();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  });
+  document.querySelectorAll('[data-view-mail]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        const lib = await API.get(base);
+        const found = (lib.templates || []).find((t) => t.id === btn.dataset.viewMail);
+        if (!found) {
+          showToast('That template is gone', 'error');
+          return;
+        }
+        await showViewAsMail(mailPayloadFromTemplate(found));
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  });
+  document.querySelectorAll('[data-delete-mail]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Delete this mail template?')) return;
+      try {
+        await API.delete(`${base}/${btn.dataset.deleteMail}`);
+        showToast('Template deleted');
+        if (mailEditor && mailEditor.id === btn.dataset.deleteMail) mailEditor = null;
+        after();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  });
+  document.getElementById('t-cancel')?.addEventListener('click', () => {
+    mailEditor = null;
+    after();
+  });
+  document.getElementById('t-save')?.addEventListener('click', async () => {
+    const vals = readTemplateEditor();
+    try {
+      if (mailEditor.mode === 'add') {
+        await API.post(base, vals);
+        showToast('Template added');
+      } else {
+        await API.request(`${base}/${mailEditor.id}`, { method: 'PUT', body: JSON.stringify(vals) });
+        showToast('Template saved');
+      }
+      mailEditor = null;
+      after();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+  document.getElementById('t-view-mail')?.addEventListener('click', () => {
+    showViewAsMail(readTemplateEditor());
+  });
+  document.getElementById('t-preview')?.addEventListener('click', async () => {
+    const out = document.getElementById('t-preview-out');
+    try {
+      const res = await API.post(previewAPI, readTemplateEditor());
+      out.innerHTML = ['due', 'advance'].map((kind) => {
+        const p = res[kind];
+        return `
+          <div class="card channel-card preview-card">
+            <h3>Preview — ${kind === 'due' ? 'at the due time' : 'advance notice'}</h3>
+            ${(p.warnings || []).map((wmsg) =>
+              `<p class="test-result bad">${escapeHTML(wmsg)}</p>`).join('')}
+            <p class="preview-label">Subject</p>
+            <p class="preview-subject">${escapeHTML(p.subject)}</p>
+            <p class="preview-label">HTML</p>
+            <iframe class="preview-frame" sandbox srcdoc="${escapeHTML(p.html)}" title="Email preview"></iframe>
+            <p class="preview-label">Plain text</p>
+            <pre class="preview-pre">${escapeHTML(p.text)}</pre>
+            <p class="preview-label">Telegram</p>
+            <pre class="preview-pre">${escapeHTML(p.telegram)}</pre>
+          </div>`;
+      }).join('');
+      out.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (err) {
+      out.innerHTML = `<p class="test-result bad">${escapeHTML(err.message)}</p>`;
+    }
+  });
+}
+
 async function renderMyTemplates() {
   let cfg;
+  let lib;
   try {
-    cfg = await API.get('/api/me/templates');
+    [cfg, lib] = await Promise.all([
+      API.get('/api/me/templates'),
+      API.get('/api/me/mail-templates'),
+    ]);
   } catch (err) {
     document.getElementById('app').innerHTML = shellHTML('/settings',
       `<h1 class="page-title">Message wording</h1>${emptyState('Could not load templates', escapeHTML(err.message))}`);
@@ -1270,34 +1649,11 @@ async function renderMyTemplates() {
 
   const main = `
     <h1 class="page-title">Message wording</h1>
-    <p class="page-sub">Change how your own reminders read. Everyone else keeps the defaults.</p>
-    <div class="card channel-card">
-      ${templateEditorHTML(cfg.own, {
-        variables: cfg.variables,
-        inheritHint: 'Leave a field blank to use what the instance provides. Only the fields you fill in are yours.',
-      })}
-      <div class="settings-actions">
-        <button class="btn btn-primary" id="t-save">Save my wording</button>
-        <button class="btn" id="t-preview">Preview</button>
-        <button class="btn btn-danger" id="t-reset">Use the defaults</button>
-        <a href="#/settings/notifications" class="btn btn-ghost btn-sm">← Notifications</a>
-      </div>
-    </div>
-    <div id="t-preview-out"></div>
+    <p class="page-sub">Design how your reminders read. A template you mark as in use is the one that gets sent.</p>
+    ${mailLibraryHTML(lib, cfg.variables, 'user')}
+    <a href="#/settings/notifications" class="btn btn-ghost btn-sm" style="margin-top:16px">← Notifications</a>
   `;
   document.getElementById('app').innerHTML = shellHTML('/settings', main);
   bindShell('/settings');
-  bindTemplateEditor({
-    save: (vals) => API.request('/api/me/templates', { method: 'PUT', body: JSON.stringify(vals) }),
-    preview: (vals) => API.post('/api/me/templates/preview', vals),
-    // Clearing every field is how a user reverts: the instance wording applies again.
-    reset: () => API.request('/api/me/templates', {
-      method: 'PUT',
-      body: JSON.stringify({
-        email_subject: '', email_html: '', email_text: '',
-        telegram_text: '', telegram_parse_mode: '',
-      }),
-    }),
-    after: renderMyTemplates,
-  });
+  bindMailLibrary('user', renderMyTemplates);
 }

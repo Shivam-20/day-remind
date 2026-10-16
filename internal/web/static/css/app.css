@@ -18,6 +18,10 @@ button, input, select, textarea { font: inherit; }
   display: grid;
   grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
   min-height: 100dvh;
+  transition: grid-template-columns 0.2s ease;
+}
+.layout.sidebar-hidden {
+  grid-template-columns: 0 minmax(0, 1fr);
 }
 .sidebar {
   background: var(--surface);
@@ -27,7 +31,22 @@ button, input, select, textarea { font: inherit; }
   position: sticky;
   top: 0;
   height: 100dvh;
+  min-width: var(--sidebar-w);
+  overflow: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
 }
+.layout.sidebar-hidden .sidebar {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.topbar-start {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.sidebar-top-toggle { flex-shrink: 0; }
 .brand {
   padding: 20px 16px 12px;
   font-weight: 700;
@@ -151,6 +170,21 @@ button, input, select, textarea { font: inherit; }
 .reminder-title { font-weight: 600; margin: 4px 0; }
 .reminder-meta { font-size: 0.8rem; color: var(--text-3); }
 .reminder-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.btn-with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  line-height: 1.2;
+}
+.btn-with-icon .btn-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.btn-with-icon .btn-icon svg {
+  width: 1rem;
+  height: 1rem;
+}
+.btn-with-icon .btn-label { white-space: nowrap; }
 .badge {
   display: inline-block;
   font-size: 0.7rem;
@@ -288,7 +322,19 @@ button, input, select, textarea { font: inherit; }
 
 @media (max-width: 768px) {
   .layout { grid-template-columns: 1fr; }
-  .sidebar { display: none; }
+  .layout:not(.sidebar-visible-mobile) .sidebar { display: none; }
+  .layout.sidebar-visible-mobile { grid-template-columns: var(--sidebar-w) minmax(0, 1fr); }
+  .layout.sidebar-visible-mobile .sidebar {
+    display: flex;
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 40;
+    box-shadow: var(--shadow, 0 8px 32px rgba(0, 0, 0, 0.35));
+  }
   .bottom-nav { display: grid; }
   .fab { display: block; }
   .page { padding: 16px 16px calc(var(--bottom-nav-h) + 80px); }
@@ -579,6 +625,41 @@ button, input, select, textarea { font: inherit; }
 .var-ref ul { margin: 10px 0 0; padding-left: 18px; color: var(--text-2); }
 .var-ref li { margin-bottom: 4px; }
 .var-ref code { font-family: var(--mono); color: var(--accent); }
+
+.mail-design {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0 16px;
+}
+.template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+.template-card h3 { margin: 0 0 8px; font-size: 1rem; }
+.template-card .page-sub { margin: 0 0 12px; }
+
+.mail-preview-card { margin-top: 16px; }
+.mail-preview-inbox {
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.mail-preview-from {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--text-3);
+  margin-bottom: 4px;
+}
+.mail-preview-subject {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text-1);
+  font-size: 1rem;
+}
+.mail-preview-frame { min-height: 280px; }
 
 .preview-card { margin-top: 16px; }
 .preview-label {
