@@ -5,7 +5,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 API="$ROOT/scripts/botkeep-api.sh"
 WL_ID="${BOTKEEP_WORKLOAD_ID:-56ba890b-2b74-4e58-911d-61db5985b287}"
 
-START_CMD='export GOCACHE=/home/container/.cache/go-build GOTMPDIR=/home/container/tmp; mkdir -p "$GOCACHE" "$GOTMPDIR"; if [ ! -x ./day-remind ]; then CGO_ENABLED=0 go build -o day-remind ./cmd/server; fi; exec ./day-remind'
+# Build only when sources are newer than the binary. Never `go run` (recompiles the whole tree every boot).
+START_CMD='export GOCACHE=/home/container/.cache/go-build GOTMPDIR=/home/container/tmp CGO_ENABLED=0; mkdir -p "$GOCACHE" "$GOTMPDIR"; if [ ! -x ./day-remind ] || [ cmd/server -nt ./day-remind ] || [ internal -nt ./day-remind ]; then go build -o day-remind ./cmd/server; fi; exec ./day-remind'
 
 echo "Fetching workload $WL_ID ..."
 detail="$("$API" workload "$WL_ID")"

@@ -69,8 +69,12 @@ chmod +x scripts/botkeep-api.sh scripts/botkeep-tune-day-remind.sh
 ./scripts/botkeep-api.sh workloads
 ./scripts/botkeep-api.sh workload 56ba890b-2b74-4e58-911d-61db5985b287
 ./scripts/botkeep-tune-day-remind.sh   # cached go build, WEB_PORT, DATABASE_URL/db name, restart
-./scripts/botkeep-pull-deploy.sh       # pull latest GitHub commit (needs BOTKEEP_SYNC_CONFIRM=server name)
+./scripts/botkeep-tune-day-remind.sh   # cached binary; do not go run
+./scripts/botkeep-upload-changed.sh    # upload a few files via files API (not 150+ GitHub apply)
+./scripts/botkeep-pull-deploy.sh       # full GitHub tree — slow; avoid unless the node is empty
 ```
+
+Do **not** use GitHub sync for every push. Botkeep applies **every file in the repo** (~150+ paths). Prefer `botkeep-upload-changed.sh` or a pre-built `ghcr.io/shivam-20/day-remind` image if the egg allows a custom Docker image.
 
 ## Deploy via SFTP (skip GitHub sync)
 

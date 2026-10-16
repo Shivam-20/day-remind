@@ -88,6 +88,17 @@ case "$cmd" in
       -d "$body" \
       "$BASE/api/v1/developer/workloads/$id/environment"
     ;;
+  github-autopull)
+    id="${1:?workload id}"
+    on="${2:-false}"
+    rev="${3:?64-char revision from github-get}"
+    key="$(idem)"
+    curl -sS "${auth[@]}" -X PATCH \
+      -H "Content-Type: application/json" \
+      -H "Idempotency-Key: $key" \
+      -d "$(REV="$rev" ON="$on" python3 -c 'import json,os; print(json.dumps({"revision":os.environ["REV"],"autoPull":os.environ["ON"].lower() in ("1","true","yes")}))')" \
+      "$BASE/api/v1/developer/workloads/$id/github"
+    ;;
   github-inspect)
     id="${1:?workload id}"
     repo="${2:?owner/repo}"
@@ -124,6 +135,28 @@ case "$cmd" in
       -d "$(CMD="$cmd" python3 -c 'import json,os; print(json.dumps({"command":os.environ["CMD"]}))')" \
       "$BASE/api/v1/developer/workloads/$id/console/command"
     ;;
+  files)
+    id="${1:?workload id}"
+    dir="${2:-/}"
+    curl -sS "${auth[@]}" "$BASE/api/v1/developer/workloads/$id/files?directory=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe="/"))' "$dir")"
+    ;;
+  file-put)
+    id="${1:?workload id}"
+    path="${2:?remote path}"
+    local="${3:?local file}"
+    key="$(idem)"
+    body="$(PATH_R="$path" LOCAL="$local" python3 -c '
+import json, os, base64
+p = os.environ["PATH_R"]
+raw = open(os.environ["LOCAL"], "rb").read()
+print(json.dumps({"path": p, "data": base64.b64encode(raw).decode("ascii"), "overwrite": True}))
+')"
+    curl -sS "${auth[@]}" -X POST \
+      -H "Content-Type: application/json" \
+      -H "Idempotency-Key: $key" \
+      -d "$body" \
+      "$BASE/api/v1/developer/workloads/$id/files/upload"
+    ;;
   github-sync)
     id="${1:?workload id}"
     repo="${2:?owner/repo}"
@@ -157,7 +190,9 @@ Usage:
   botkeep-api.sh github-sync <workload_id> <owner/repo> <64-char-revision> [branch]
   botkeep-api.sh github-recover <workload_id> [resume|rollback] [server-name]
   botkeep-api.sh console-cmd <workload_id> '<command>'
-  ./scripts/botkeep-pull-deploy.sh   # github-get revision + sync (BOTKEEP_SYNC_CONFIRM)
+  botkeep-api.sh github-autopull <id> false <64-char-revision>
+  ./scripts/botkeep-upload-changed.sh   # few files, not full GitHub sync
+  ./scripts/botkeep-pull-deploy.sh      # full tree — slow
 
 OpenAPI: GET /api/v1/developer/openapi.json
 Power:   POST /api/v1/developer/workloads/{id}/actions  (Idempotency-Key header)

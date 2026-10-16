@@ -12,4 +12,4 @@ rev="$("$API" github-get "$WL_ID" | python3 -c "import json,sys; print(json.load
 echo "Syncing $REPO @ $BRANCH (revision lock ${rev:0:12}…) …"
 export BOTKEEP_SYNC_CONFIRM="$CONFIRM"
 "$API" github-sync "$WL_ID" "$REPO" "$rev" "$BRANCH"
-echo "Queued. Watch Botkeep GitHub / Console for applying → running."
+echo "Queued a FULL tree apply (~150 files). Prefer ./scripts/botkeep-upload-changed.sh for routine deploys."
