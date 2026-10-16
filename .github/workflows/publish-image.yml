@@ -1,0 +1,33 @@
+# Pre-built runtime image for Pterodactyl/Botkeep — do not compile on the game node.
+name: Publish container image
+
+on:
+  push:
+    branches: [main, feat/delivery-config-and-templates]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/shivam-20/day-remind:latest
+            ghcr.io/shivam-20/day-remind:${{ github.sha }}
