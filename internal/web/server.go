@@ -111,7 +111,10 @@ func (s *Server) Handler() http.Handler {
 		panic(err)
 	}
 	fileServer := http.FileServer(http.FS(staticFS))
-	r.Handle("/static/*", http.StripPrefix("/static/", fileServer))
+	r.Handle("/static/*", http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		fileServer.ServeHTTP(w, r)
+	})))
 	r.Get("/", s.serveIndex)
 	r.Get("/portal", s.serveIndex)
 	r.NotFound(s.serveIndex)
