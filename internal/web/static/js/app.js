@@ -4,23 +4,28 @@ const state = {
   filter: 'all',
 };
 
-const routes = {
-  '/today': renderToday,
-  '/reminders': renderReminders,
-  '/settings': renderSettings,
-  '/settings/vacation': renderVacationSettings,
-  '/settings/notifications': renderNotificationSettings,
-  '/settings/templates': renderMyTemplates,
-  '/settings/wording': renderMessageWording,
-  '/admin': renderAdmin,
-  ...(window.DR_FEATURE_ROUTES || {}),
-};
+function allRoutes() {
+  return {
+    '/today': renderToday,
+    '/reminders': renderReminders,
+    '/settings': renderSettings,
+    '/settings/vacation': renderVacationSettings,
+    '/settings/notifications': renderNotificationSettings,
+    '/settings/templates': renderMyTemplates,
+    '/admin': renderAdmin,
+    ...(window.DR_FEATURE_ROUTES || {}),
+  };
+}
 
 function isAdmin() {
   return state.user?.role === 'admin';
 }
 
-document.addEventListener('DOMContentLoaded', boot);
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', boot);
+} else {
+  boot();
+}
 
 async function boot() {
   const hash = location.hash.replace('#', '') || '/today';
@@ -30,7 +35,7 @@ async function boot() {
   }
   try {
     state.user = await API.get('/api/me');
-    renderApp(hash);
+    await renderApp(hash);
   } catch {
     location.hash = '#/login';
     renderAuth(false);
@@ -204,14 +209,16 @@ async function renderApp(route) {
       await feature(route);
       return;
     }
-    if (routes[route]) {
-      await routes[route](route);
+    const table = allRoutes();
+    if (table[route]) {
+      await table[route](route);
       return;
     }
     await renderSettings(route);
     return;
   }
-  const fn = routes[route] || routes['/today'];
+  const table = allRoutes();
+  const fn = table[route] || table['/today'];
   await fn(route);
 }
 
