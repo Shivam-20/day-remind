@@ -35,34 +35,34 @@ shift || true
 
 case "$cmd" in
   openapi)
-    curl -sS "${auth[@]}" "$BASE/api/v1/developer/openapi.json"
+    curl -sSf "${auth[@]}" "$BASE/api/v1/developer/openapi.json"
     ;;
   workloads)
-    curl -sS "${auth[@]}" "$BASE/api/v1/developer/workloads?limit=${1:-50}"
+    curl -sSf "${auth[@]}" "$BASE/api/v1/developer/workloads?limit=${1:-50}"
     ;;
   workload)
     id="${1:?workload id}"
-    curl -sS "${auth[@]}" "$BASE/api/v1/developer/workloads/$id"
+    curl -sSf "${auth[@]}" "$BASE/api/v1/developer/workloads/$id"
     ;;
   env)
     id="${1:?workload id}"
-    curl -sS "${auth[@]}" "$BASE/api/v1/developer/workloads/$id/environment"
+    curl -sSf "${auth[@]}" "$BASE/api/v1/developer/workloads/$id/environment"
     ;;
   capabilities)
-    curl -sS "${auth[@]}" "$BASE/api/v1/developer/capabilities"
+    curl -sSf "${auth[@]}" "$BASE/api/v1/developer/capabilities"
     ;;
   plan)
-    curl -sS "${auth[@]}" "$BASE/api/v1/developer/plan"
+    curl -sSf "${auth[@]}" "$BASE/api/v1/developer/plan"
     ;;
   network)
     id="${1:?workload id}"
-    curl -sS "${auth[@]}" "$BASE/api/v1/developer/workloads/$id/network"
+    curl -sSf "${auth[@]}" "$BASE/api/v1/developer/workloads/$id/network"
     ;;
   action)
     id="${1:?workload id}"
     act="${2:?start|stop|restart|redeploy|...}"
     key="$(idem)"
-    curl -sS "${auth[@]}" -X POST \
+    curl -sSf "${auth[@]}" -X POST \
       -H "Content-Type: application/json" \
       -H "Idempotency-Key: $key" \
       -d "{\"action\":\"$act\"}" \
@@ -72,7 +72,7 @@ case "$cmd" in
     id="${1:?workload id}"
     body="${2:?json body}"
     key="$(idem)"
-    curl -sS "${auth[@]}" -X PUT \
+    curl -sSf "${auth[@]}" -X PUT \
       -H "Content-Type: application/json" \
       -H "Idempotency-Key: $key" \
       -d "$body" \
@@ -82,7 +82,7 @@ case "$cmd" in
     id="${1:?workload id}"
     body="${2:?json EnvironmentInput}"
     key="$(idem)"
-    curl -sS "${auth[@]}" -X PUT \
+    curl -sSf "${auth[@]}" -X PUT \
       -H "Content-Type: application/json" \
       -H "Idempotency-Key: $key" \
       -d "$body" \
@@ -93,7 +93,7 @@ case "$cmd" in
     on="${2:-false}"
     rev="${3:?64-char revision from github-get}"
     key="$(idem)"
-    curl -sS "${auth[@]}" -X PATCH \
+    curl -sSf "${auth[@]}" -X PATCH \
       -H "Content-Type: application/json" \
       -H "Idempotency-Key: $key" \
       -d "$(REV="$rev" ON="$on" python3 -c 'import json,os; print(json.dumps({"revision":os.environ["REV"],"autoPull":os.environ["ON"].lower() in ("1","true","yes")}))')" \
@@ -104,7 +104,7 @@ case "$cmd" in
     repo="${2:?owner/repo}"
     branch="${3:-}"
     key="$(idem)"
-    curl -sS "${auth[@]}" -X POST \
+    curl -sSf "${auth[@]}" -X POST \
       -H "Content-Type: application/json" \
       -H "Idempotency-Key: $key" \
       -d "$(REPO="$repo" BR="$branch" python3 -c 'import json,os; print(json.dumps({"repository":os.environ["REPO"],"branch":os.environ["BR"]}))')" \
@@ -112,14 +112,14 @@ case "$cmd" in
     ;;
   github-get)
     id="${1:?workload id}"
-    curl -sS "${auth[@]}" "$BASE/api/v1/developer/workloads/$id/github"
+    curl -sSf "${auth[@]}" "$BASE/api/v1/developer/workloads/$id/github"
     ;;
   github-recover)
     id="${1:?workload id}"
     act="${2:-resume}"
     confirm="${3:-Go server}"
     key="$(idem)"
-    curl -sS "${auth[@]}" -X POST \
+    curl -sSf "${auth[@]}" -X POST \
       -H "Content-Type: application/json" \
       -H "Idempotency-Key: $key" \
       -d "$(ACT="$act" CF="$confirm" python3 -c 'import json,os; print(json.dumps({"action":os.environ["ACT"],"confirmation":os.environ["CF"]}))')" \
@@ -129,7 +129,7 @@ case "$cmd" in
     id="${1:?workload id}"
     cmd="${2:?command}"
     key="$(idem)"
-    curl -sS "${auth[@]}" -X POST \
+    curl -sSf "${auth[@]}" -X POST \
       -H "Content-Type: application/json" \
       -H "Idempotency-Key: $key" \
       -d "$(CMD="$cmd" python3 -c 'import json,os; print(json.dumps({"command":os.environ["CMD"]}))')" \
@@ -138,7 +138,7 @@ case "$cmd" in
   files)
     id="${1:?workload id}"
     dir="${2:-/}"
-    curl -sS "${auth[@]}" "$BASE/api/v1/developer/workloads/$id/files?directory=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe="/"))' "$dir")"
+    curl -sSf "${auth[@]}" "$BASE/api/v1/developer/workloads/$id/files?directory=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe="/"))' "$dir")"
     ;;
   file-put)
     id="${1:?workload id}"
@@ -151,7 +151,7 @@ p = os.environ["PATH_R"]
 raw = open(os.environ["LOCAL"], "rb").read()
 print(json.dumps({"path": p, "data": base64.b64encode(raw).decode("ascii"), "overwrite": True}))
 ')"
-    curl -sS "${auth[@]}" -X POST \
+    curl -sSf "${auth[@]}" -X POST \
       -H "Content-Type: application/json" \
       -H "Idempotency-Key: $key" \
       -d "$body" \
@@ -162,7 +162,7 @@ print(json.dumps({"path": p, "data": base64.b64encode(raw).decode("ascii"), "ove
     shift
     key="$(idem)"
     body="$(PATHS="$*" python3 -c 'import json, os; print(json.dumps({"action": "delete", "paths": os.environ["PATHS"].split()}))')"
-    curl -sS "${auth[@]}" -X POST \
+    curl -sSf "${auth[@]}" -X POST \
       -H "Content-Type: application/json" \
       -H "Idempotency-Key: $key" \
       -d "$body" \
@@ -177,7 +177,7 @@ print(json.dumps({"path": p, "data": base64.b64encode(raw).decode("ascii"), "ove
     key="$(idem)"
     confirm="${BOTKEEP_SYNC_CONFIRM:-sync}"
     body="$(REPO="$repo" BR="$branch" REV="$rev" REQ="$req" CF="$confirm" python3 -c 'import json,os; print(json.dumps({"repository":os.environ["REPO"],"branch":os.environ["BR"],"revision":os.environ["REV"],"confirmation":os.environ["CF"],"requestId":os.environ["REQ"],"restart":True}))')"
-    curl -sS "${auth[@]}" -X POST \
+    curl -sSf "${auth[@]}" -X POST \
       -H "Content-Type: application/json" \
       -H "Idempotency-Key: $key" \
       -d "$body" \

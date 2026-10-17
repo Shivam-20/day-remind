@@ -823,6 +823,100 @@ async function renderVacationSettings() {
 
 // ---------------------------------------------------------------- reminder drawers
 
+function listPickerHTML(lists, selectedID) {
+  if (!lists.length) return '';
+  return `
+    <div class="field">
+      <span class="form-label-icon" style="margin-bottom:8px">${actionIconSVG('list')}List</span>
+      ${chipGroupHTML('r-list', [['', 'None'], ...lists.map((l) => [l.id, l.name])], selectedID || '', 'due-chips')}
+    </div>`;
+}
+
+async function fetchUserLists() {
+  try {
+    const data = await API.get('/api/lists');
+    return data.lists || [];
+  } catch {
+    return [];
+  }
+}
+
+function subtasksSectionHTML(subtasks) {
+  const rows = subtasks.map((st) => `
+    <label class="subtask-row">
+      <input type="checkbox" data-subtask="${escapeHTML(st.id)}" ${st.done ? 'checked' : ''}>
+      <span class="${st.done ? 'is-done' : ''}">${escapeHTML(st.title)}</span>
+    </label>`).join('');
+  return `
+    <div class="sec-head" style="margin-top:20px"><h2>Subtasks</h2><span class="sec-count">${subtasks.filter((s) => s.done).length}/${subtasks.length}</span></div>
+    ${rows || '<p class="page-sub" style="margin:0 0 8px">No subtasks yet.</p>'}
+    <div class="list-tools-search" style="margin-bottom:0">
+      ${actionIconSVG('plus')}
+      <input id="st-new" type="text" placeholder="Add a subtask…" aria-label="New subtask">
+      <button class="btn btn-sm" type="button" id="st-add">Add</button>
+    </div>`;
+}
+
+function commentsSectionHTML(comments) {
+  const rows = comments.map((c) => `
+    <div class="comment-row">
+      <div class="comment-body">${escapeHTML(c.body)}</div>
+      <div class="comment-when">${escapeHTML(new Date(c.created_at).toLocaleString())}</div>
+    </div>`).join('');
+  return `
+    <div class="sec-head" style="margin-top:20px"><h2>Notes</h2><span class="sec-count">${comments.length}</span></div>
+    ${rows || '<p class="page-sub" style="margin:0 0 8px">No notes yet.</p>'}
+    <div class="list-tools-search" style="margin-bottom:0">
+      ${actionIconSVG('align-left')}
+      <input id="cm-new" type="text" placeholder="Add a note…" aria-label="New note">
+      <button class="btn btn-sm" type="button" id="cm-add">Post</button>
+    </div>`;
+}
+
+// Wire the subtask/comment sections inside an open edit drawer.
+function bindDrawerExtras(drawer, id) {
+  drawer.querySelectorAll('[data-subtask]').forEach((cb) => {
+    cb.addEventListener('change', async () => {
+      try {
+        await API.patch(`/api/reminders/${id}/subtasks/${cb.dataset.subtask}`, { done: cb.checked });
+        cb.closest('label').querySelector('span').classList.toggle('is-done', cb.checked);
+      } catch (err) {
+        cb.checked = !cb.checked;
+        showToast(err.message, 'error');
+      }
+    });
+  });
+  const addSubtask = async () => {
+    const input = drawer.querySelector('#st-new');
+    const title = input?.value.trim();
+    if (!title) return;
+    try {
+      await API.post(`/api/reminders/${id}/subtasks`, { title });
+      showToast('Subtask added');
+      openReminderDrawer(id);
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+  drawer.querySelector('#st-add')?.addEventListener('click', addSubtask);
+  drawer.querySelector('#st-new')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addSubtask(); } });
+
+  const addComment = async () => {
+    const input = drawer.querySelector('#cm-new');
+    const body = input?.value.trim();
+    if (!body) return;
+    try {
+      await API.post(`/api/reminders/${id}/comments`, { body });
+      showToast('Note added');
+      openReminderDrawer(id);
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+  drawer.querySelector('#cm-add')?.addEventListener('click', addComment);
+  drawer.querySelector('#cm-new')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addComment(); } });
+}
+
 function reminderFormFields({ title, description, due, recurrence, priority }) {
   return `
     <div class="field">
@@ -845,14 +939,16 @@ function bindReminderForm(drawer) {
   bindChoiceControls(drawer);
 }
 
-function openCreateDrawer(defaultDate) {
+async function openCreateDrawer(defaultDate) {
   const defaultDue = defaultDate
     ? new Date(defaultDate)
     : new Date();
   if (!defaultDate) defaultDue.setHours(defaultDue.getHours() + 1, 0, 0, 0);
   else defaultDue.setHours(9, 0, 0, 0);
+  const lists = await fetchUserLists();
   const drawer = openDrawer('New reminder', `
     ${reminderFormFields({ due: defaultDue })}
+    ${listPickerHTML(lists, '')}
   `, `<button class="btn" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" id="save-reminder">Save reminder</button>`);
   bindReminderForm(drawer);
   drawer.querySelector('#save-reminder').addEventListener('click', async () => {
@@ -862,15 +958,18 @@ function openCreateDrawer(defaultDate) {
       showToast('Title and due date required', 'error');
       return;
     }
+    const body = {
+      title,
+      description: document.getElementById('r-desc').value,
+      due_at: new Date(dueLocal).toISOString(),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      priority: document.getElementById('r-priority').value,
+      recurrence: readRepeat(drawer),
+    };
+    const listId = document.getElementById('r-list')?.value;
+    if (listId) body.list_id = listId;
     try {
-      await API.post('/api/reminders', {
-        title,
-        description: document.getElementById('r-desc').value,
-        due_at: new Date(dueLocal).toISOString(),
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        priority: document.getElementById('r-priority').value,
-        recurrence: readRepeat(drawer),
-      });
+      await API.post('/api/reminders', body);
       closeDrawer();
       showToast('Reminder created');
       const route = location.hash.replace('#', '') || '/today';
@@ -883,8 +982,16 @@ function openCreateDrawer(defaultDate) {
 
 async function openReminderDrawer(id) {
   let reminder;
+  let lists = [];
+  let subtasks = [];
+  let comments = [];
   try {
-    reminder = await API.get(`/api/reminders/${id}`);
+    [reminder, lists, subtasks, comments] = await Promise.all([
+      API.get(`/api/reminders/${id}`),
+      fetchUserLists(),
+      API.get(`/api/reminders/${id}/subtasks`).then((d) => d.subtasks || []).catch(() => []),
+      API.get(`/api/reminders/${id}/comments`).then((d) => d.comments || []).catch(() => []),
+    ]);
   } catch (err) {
     showToast(err.message, 'error');
     return;
@@ -898,12 +1005,16 @@ async function openReminderDrawer(id) {
       recurrence: reminder.recurrence,
       priority: reminder.priority,
     })}
+    ${listPickerHTML(lists, reminder.list_id)}
     <dl class="detail-list">
       <dt>Status</dt><dd>${escapeHTML(reminder.status)}</dd>
       <dt>Created</dt><dd>${escapeHTML(new Date(reminder.created_at).toLocaleDateString())}</dd>
     </dl>
+    ${subtasksSectionHTML(subtasks)}
+    ${commentsSectionHTML(comments)}
   `, `<button class="btn" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" id="save-reminder">Save changes</button>`);
   bindReminderForm(drawer);
+  bindDrawerExtras(drawer, id);
   drawer.querySelector('#save-reminder').addEventListener('click', async () => {
     const title = document.getElementById('r-title').value.trim();
     const dueLocal = readDueLocal(drawer);
@@ -911,15 +1022,18 @@ async function openReminderDrawer(id) {
       showToast('Title and due date required', 'error');
       return;
     }
+    const body = {
+      title,
+      description: document.getElementById('r-desc').value,
+      due_at: new Date(dueLocal).toISOString(),
+      timezone: reminder.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+      priority: document.getElementById('r-priority').value,
+      recurrence: readRepeat(drawer),
+    };
+    const listId = document.getElementById('r-list')?.value;
+    if (listId) body.list_id = listId;
     try {
-      await API.patch(`/api/reminders/${id}`, {
-        title,
-        description: document.getElementById('r-desc').value,
-        due_at: new Date(dueLocal).toISOString(),
-        timezone: reminder.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
-        priority: document.getElementById('r-priority').value,
-        recurrence: readRepeat(drawer),
-      });
+      await API.patch(`/api/reminders/${id}`, body);
       closeDrawer();
       showToast('Reminder updated');
       const route = location.hash.replace('#', '') || '/today';

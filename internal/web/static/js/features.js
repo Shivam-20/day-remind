@@ -204,22 +204,22 @@ async function renderLists() {
 
   const cards = lists.map((l, i) => {
     const color = l.color || LIST_PALETTE[i % LIST_PALETTE.length];
-    const total = l.done != null ? l.count + l.done : (l.count ?? 0);
-    const active = l.count ?? 0;
     const paused = l.paused;
+    const total = l.done != null ? l.count + l.done : (l.count ?? 0);
     return `
       <article class="list-card${paused ? ' is-paused' : ''}" style="--list-color:${escapeHTML(color)}" data-list="${escapeHTML(l.id || '')}" tabindex="0">
         <h3>${escapeHTML(l.name)}
-          ${paused ? '<span class="badge badge-idle">paused</span>' : `<span class="badge badge-ok">${active} active</span>`}
+          ${paused ? '<span class="badge badge-idle">paused</span>' : `<span class="badge badge-ok">${l.count ?? 0} reminders</span>`}
         </h3>
-        <p class="list-card-sub"><b>${total} total</b>${l.done ? ` · ${l.done} done` : ''}${l.overdue ? ` · <span style="color:var(--danger)">${l.overdue} overdue</span>` : ''}</p>
+        <p class="list-card-sub"><b>${total} total</b>${l.done ? ` · ${l.done} done` : ''}</p>
         <div class="row-actions">
           <button type="button" class="icon-btn" data-open-list aria-label="Open ${escapeHTML(l.name)}">${actionIconSVG('arrow-right')}</button>
           ${canManage ? `
-            <button type="button" class="icon-btn" data-rename-list aria-label="Rename ${escapeHTML(l.name)}">${actionIconSVG('pencil')}</button>
+            <button type="button" class="icon-btn" data-edit-list="${escapeHTML(l.id)}" aria-label="Rename ${escapeHTML(l.name)}">${actionIconSVG('pencil')}</button>
             ${paused
               ? `<button type="button" class="icon-btn" data-resume="${escapeHTML(l.id)}" aria-label="Resume ${escapeHTML(l.name)}">${actionIconSVG('play')}</button>`
               : `<button type="button" class="icon-btn" data-pause="${escapeHTML(l.id)}" aria-label="Pause ${escapeHTML(l.name)}">${actionIconSVG('pause')}</button>`}
+            <button type="button" class="icon-btn danger" data-delete-list="${escapeHTML(l.id)}" aria-label="Delete ${escapeHTML(l.name)}">${actionIconSVG('trash')}</button>
           ` : ''}
         </div>
       </article>`;
@@ -269,7 +269,33 @@ async function renderLists() {
     btn.addEventListener('click', () => btn.closest('.list-card').click());
   });
   document.querySelectorAll('[data-new-list]').forEach((btn) => {
-    btn.addEventListener('click', openCreateListModal);
+    btn.addEventListener('click', () => openListModal());
+  });
+  document.querySelectorAll('[data-edit-list]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const l = lists.find((x) => x.id === btn.dataset.editList);
+      if (l) openListModal(l);
+    });
+  });
+  document.querySelectorAll('[data-delete-list]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const l = lists.find((x) => x.id === btn.dataset.deleteList);
+      if (!l) return;
+      const drawer = openDrawer('Delete list', `
+        <p style="margin-top:0">Delete <strong>${escapeHTML(l.name)}</strong>?</p>
+        <p style="color:var(--danger);margin-bottom:0">The list is removed; its reminders stay and simply lose the list.</p>
+      `, `<button class="btn" type="button" data-close-drawer>Cancel</button><button class="btn btn-danger" id="list-del-go">Delete list</button>`);
+      drawer.querySelector('#list-del-go').addEventListener('click', async () => {
+        try {
+          await API.delete(`/api/lists/${l.id}`);
+          closeDrawer();
+          showToast('List deleted');
+          renderLists();
+        } catch (err) {
+          showToast(err.message, 'error');
+        }
+      });
+    });
   });
   document.querySelectorAll('[data-pause]').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -287,18 +313,25 @@ async function renderLists() {
   });
 }
 
-function openCreateListModal() {
-  const drawer = openDrawer('New list', `
-    <div class="field"><label for="list-name">Name</label><input id="list-name" required></div>
-    <div class="field"><label for="list-color">Color</label><input id="list-color" type="color" value="#3b82f6"></div>
-  `, `<button class="btn" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" id="save-list">Create</button>`);
+// openListModal creates a list, or edits one when passed.
+function openListModal(existing) {
+  const isEdit = !!existing;
+  const drawer = openDrawer(isEdit ? 'Edit list' : 'New list', `
+    <div class="field"><label for="list-name">Name</label><input id="list-name" value="${escapeHTML(existing?.name || '')}" required></div>
+    <div class="field"><label for="list-color">Color</label><input id="list-color" type="color" value="${escapeHTML(existing?.color || '#7cacf8')}"></div>
+  `, `<button class="btn" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" id="save-list">${isEdit ? 'Save' : 'Create'}</button>`);
   drawer.querySelector('#save-list').addEventListener('click', async () => {
     const name = document.getElementById('list-name').value.trim();
     if (!name) return showToast('Name required', 'error');
     try {
-      await API.post('/api/lists', { name, color: document.getElementById('list-color').value });
+      if (isEdit) {
+        await API.patch(`/api/lists/${existing.id}`, { name, color: document.getElementById('list-color').value });
+        showToast('List saved');
+      } else {
+        await API.post('/api/lists', { name, color: document.getElementById('list-color').value });
+        showToast('List created');
+      }
       closeDrawer();
-      showToast('List created');
       renderLists();
     } catch (err) {
       showToast(err.message, 'error');
