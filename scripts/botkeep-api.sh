@@ -157,6 +157,17 @@ print(json.dumps({"path": p, "data": base64.b64encode(raw).decode("ascii"), "ove
       -d "$body" \
       "$BASE/api/v1/developer/workloads/$id/files/upload"
     ;;
+  files-delete)
+    id="${1:?workload id}"
+    shift
+    key="$(idem)"
+    body="$(PATHS="$*" python3 -c 'import json, os; print(json.dumps({"action": "delete", "paths": os.environ["PATHS"].split()}))')"
+    curl -sS "${auth[@]}" -X POST \
+      -H "Content-Type: application/json" \
+      -H "Idempotency-Key: $key" \
+      -d "$body" \
+      "$BASE/api/v1/developer/workloads/$id/files/batch"
+    ;;
   github-sync)
     id="${1:?workload id}"
     repo="${2:?owner/repo}"

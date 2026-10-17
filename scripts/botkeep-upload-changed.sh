@@ -4,7 +4,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 API="$ROOT/scripts/botkeep-api.sh"
-WL_ID="${BOTKEEP_WORKLOAD_ID:-56ba890b-2b74-4e58-911d-61db5985b287}"
+WL_ID="${BOTKEEP_WORKLOAD_ID:-e7527a22-2987-4019-bbcb-cdaafc88d2c1}"
 cd "$ROOT"
 
 if [[ $# -gt 0 ]]; then
@@ -31,7 +31,7 @@ for f in "${files[@]}"; do
 done
 
 echo "Removing stale binary so next start rebuilds once …"
-"$API" console-cmd "$WL_ID" "rm -f /home/container/day-remind ./day-remind" >/dev/null || true
+"$API" files-delete "$WL_ID" "/day-remind" >/dev/null || true
 echo "Restarting …"
 "$API" action "$WL_ID" restart
 echo "Done. Site should come up on the allocated WEB_PORT without copying the whole repo."
