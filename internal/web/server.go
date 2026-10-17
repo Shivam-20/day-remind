@@ -52,6 +52,10 @@ func (s *Server) Handler() http.Handler {
 	r.Group(func(pr chi.Router) {
 		pr.Use(s.requireSession)
 		pr.Get("/api/me", s.handleMe)
+		pr.Patch("/api/me", s.handleUpdateMe)
+		pr.Post("/api/me/password", s.handleChangePassword)
+		pr.Get("/api/export/json", s.handleExportJSON)
+		pr.Get("/api/export/ical", s.handleExportICal)
 		pr.Post("/api/me/notifications/pause", s.handlePauseNotifications)
 		pr.Post("/api/me/notifications/resume", s.handleResumeNotifications)
 

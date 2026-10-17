@@ -45,6 +45,16 @@ func (db *DB) DeleteSession(ctx context.Context, token string) error {
 	return err
 }
 
+// DeleteOtherSessions signs a user out everywhere except the given token, e.g.
+// after a password change so stolen cookies stop working.
+func (db *DB) DeleteOtherSessions(ctx context.Context, userID uuid.UUID, keepToken string) error {
+	_, err := db.collection("sessions").DeleteMany(ctx, bson.M{
+		"user_id": userID,
+		"_id":     bson.M{"$ne": keepToken},
+	})
+	return err
+}
+
 func (db *DB) GetSessionUserID(ctx context.Context, token string) (uuid.UUID, error) {
 	var doc sessionDoc
 	err := db.collection("sessions").FindOne(ctx, bson.M{"_id": token}).Decode(&doc)

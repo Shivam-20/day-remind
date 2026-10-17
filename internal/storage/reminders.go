@@ -169,6 +169,28 @@ func (db *DB) ListReminders(ctx context.Context, f reminder.ListFilter) ([]remin
 	return out, cur.Err()
 }
 
+// ListRemindersForExport returns every non-deleted reminder for the user with
+// no cap, for backups. It bypasses ListFilter on purpose: an export that
+// silently stops at the usual page limit is worse than none.
+func (db *DB) ListRemindersForExport(ctx context.Context, userID uuid.UUID) ([]reminder.Reminder, error) {
+	opts := options.Find().SetSort(bson.D{{Key: "due_at", Value: 1}})
+	cur, err := db.collection("reminders").Find(ctx, bson.M{"user_id": userID}, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	var out []reminder.Reminder
+	for cur.Next(ctx) {
+		var doc reminderDoc
+		if err := cur.Decode(&doc); err != nil {
+			return nil, err
+		}
+		out = append(out, reminderFromDoc(doc))
+	}
+	return out, cur.Err()
+}
+
 func (db *DB) UpdateReminder(ctx context.Context, userID, id uuid.UUID, in reminder.UpdateInput) (reminder.Reminder, error) {
 	cur, err := db.GetReminder(ctx, userID, id)
 	if err != nil {

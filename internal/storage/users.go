@@ -276,6 +276,41 @@ func (db *DB) CountAdmins(ctx context.Context) (int64, error) {
 	return db.collection("users").CountDocuments(ctx, bson.M{"role": RoleAdmin})
 }
 
+// SetUserProfile updates the self-service profile fields. A nil field keeps the
+// stored value, so a PATCH can change either one on its own.
+func (db *DB) SetUserProfile(ctx context.Context, userID uuid.UUID, displayName, timezone *string) (User, error) {
+	set := bson.M{"updated_at": time.Now().UTC()}
+	if displayName != nil {
+		set["display_name"] = strings.TrimSpace(*displayName)
+	}
+	if timezone != nil {
+		set["timezone"] = strings.TrimSpace(*timezone)
+	}
+	res, err := db.collection("users").UpdateOne(ctx, bson.M{"_id": userID}, bson.M{"$set": set})
+	if err != nil {
+		return User{}, err
+	}
+	if res.MatchedCount == 0 {
+		return User{}, ErrNotFound
+	}
+	return db.GetUserByID(ctx, userID)
+}
+
+// SetUserPassword stores a new password hash. The caller is responsible for
+// verifying the current password first; this method only writes.
+func (db *DB) SetUserPassword(ctx context.Context, userID uuid.UUID, passwordHash string) error {
+	res, err := db.collection("users").UpdateOne(ctx, bson.M{"_id": userID}, bson.M{
+		"$set": bson.M{"password_hash": passwordHash, "updated_at": time.Now().UTC()},
+	})
+	if err != nil {
+		return err
+	}
+	if res.MatchedCount == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // DeleteUser removes the user and everything owned by them. Mongo has no
 // foreign keys, so the cascade is explicit; reminders and sessions go first so
 // a failure midway cannot leave rows pointing at a user that no longer exists.
