@@ -690,14 +690,18 @@ async function renderSettings(route = '/settings') {
         <p>Pause all notifications or review paused reminders.</p>
         ${state.user?.notifications_paused ? '<p class="settings-card-status" style="color:var(--danger)">Notifications paused</p>' : ''}
       </div>
-      <div class="card settings-card is-dead">
+      <div class="card settings-card" id="open-profile">
         <h3>${iconHTML('panel')}Profile</h3>
         <p>${escapeHTML(state.user.email)} · ${escapeHTML(state.user.timezone)}</p>
+        <p class="settings-card-status">Name, timezone, password</p>
       </div>
-      <div class="card settings-card is-dead">
-        <h3>${iconHTML('download')}Data export / import</h3>
-        <p>JSON backup of your reminders.</p>
-        <span class="soon">Coming soon</span>
+      <div class="card settings-card">
+        <h3>${iconHTML('download')}Data export</h3>
+        <p>Download a backup of all your reminders.</p>
+        <div class="settings-actions" style="margin-top:10px">
+          <a class="btn btn-sm" href="${API.url('/api/export/json')}" download>JSON</a>
+          <a class="btn btn-sm" href="${API.url('/api/export/ical')}" download>iCal</a>
+        </div>
       </div>
       <div class="card settings-card is-dead">
         <h3>${iconHTML('mail')}Google / Gmail sync</h3>
@@ -710,6 +714,73 @@ async function renderSettings(route = '/settings') {
   bindShell('/settings');
   document.querySelectorAll('[data-href]').forEach((card) => {
     card.addEventListener('click', () => { location.hash = card.dataset.href; });
+  });
+  document.getElementById('open-profile')?.addEventListener('click', openProfileDrawer);
+}
+
+function openProfileDrawer() {
+  const drawer = openDrawer('Profile', `
+    <div class="field">
+      <label for="p-name">Display name</label>
+      <input id="p-name" value="${escapeHTML(state.user.display_name || '')}" maxlength="80">
+    </div>
+    <div class="field">
+      <label for="p-tz">Timezone</label>
+      <input id="p-tz" value="${escapeHTML(state.user.timezone || '')}" placeholder="Asia/Kolkata" list="p-tz-list">
+      <datalist id="p-tz-list">
+        ${['Asia/Kolkata', 'Asia/Dubai', 'Asia/Singapore', 'Europe/London', 'Europe/Berlin', 'America/New_York', 'America/Chicago', 'America/Los_Angeles', 'Australia/Sydney', 'UTC'].map((z) => `<option value="${z}"></option>`).join('')}
+      </datalist>
+      <p class="channel-sub" style="margin:6px 0 0">Times are shown in this zone. Pick from the list or type any IANA zone.</p>
+    </div>
+    <div class="settings-actions" style="margin-top:4px">
+      <button class="btn btn-primary btn-sm" id="p-save">Save profile</button>
+    </div>
+
+    <div class="sec-head" style="margin-top:24px"><h2>Change password</h2></div>
+    <div class="field"><label for="p-cur">Current password</label><input id="p-cur" type="password" autocomplete="current-password"></div>
+    <div class="field"><label for="p-new">New password</label><input id="p-new" type="password" autocomplete="new-password" minlength="8" placeholder="At least 8 characters"></div>
+    <div class="field"><label for="p-new2">Repeat new password</label><input id="p-new2" type="password" autocomplete="new-password"></div>
+    <p class="channel-sub" style="margin:0 0 12px">Changing it signs you out everywhere else.</p>
+    <button class="btn btn-sm" id="p-pass">Change password</button>
+  `, '<button class="btn" type="button" data-close-drawer>Close</button>');
+
+  drawer.querySelector('#p-save').addEventListener('click', async () => {
+    const body = {};
+    const name = drawer.querySelector('#p-name').value.trim();
+    const tz = drawer.querySelector('#p-tz').value.trim();
+    if (name !== (state.user.display_name || '')) body.display_name = name;
+    if (tz && tz !== state.user.timezone) body.timezone = tz;
+    if (!Object.keys(body).length) {
+      showToast('Nothing to save');
+      return;
+    }
+    try {
+      state.user = await API.patch('/api/me', body);
+      showToast('Profile saved');
+      renderSettings('/settings');
+      closeDrawer();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
+  drawer.querySelector('#p-pass').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    const cur = drawer.querySelector('#p-cur').value;
+    const nw = drawer.querySelector('#p-new').value;
+    const nw2 = drawer.querySelector('#p-new2').value;
+    if (!cur || !nw) return showToast('Fill in both password fields', 'error');
+    if (nw !== nw2) return showToast('New passwords do not match', 'error');
+    btn.disabled = true;
+    try {
+      await API.post('/api/me/password', { current_password: cur, new_password: nw });
+      closeDrawer();
+      showToast('Password changed');
+      renderSettings('/settings');
+    } catch (err) {
+      showToast(err.message, 'error');
+      btn.disabled = false;
+    }
   });
 }
 
