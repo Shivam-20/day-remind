@@ -68,5 +68,6 @@ function parseMailAIResult(raw) {
     if (data[k] != null) out[k] = String(data[k]);
   }
   if (!out.name) out.name = 'AI template';
+  out.telegram_parse_mode = 'plain';
   return out;
 }

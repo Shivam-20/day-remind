@@ -7,7 +7,7 @@ function renderMessageWording() {
     const cards = templates.length
       ? `<div class="template-grid">${templates.map((t) => `
           <article class="card template-card">
-            <h3>${escapeHTML(t.name)}${t.active ? ' <span class="badge">In use</span>' : ''}</h3>
+            <h3>${escapeHTML(t.name)}${t.active ? ' <span class="badge badge-ok">In use</span>' : ''}</h3>
             <p class="page-sub">${escapeHTML(t.email_subject || 'Default subject')}</p>
             <div class="settings-actions">
               <button class="btn btn-sm btn-primary" data-use-wording="${t.id}"${t.active ? ' disabled' : ''}>Use</button>
@@ -18,7 +18,7 @@ function renderMessageWording() {
           </article>`).join('')}</div>`
       : (editing || wordingPasteOpen
         ? ''
-        : emptyState('No mail templates yet', 'Add one to design the email and the message.', ''));
+        : emptyState('No mail templates yet', 'Add one to design the email with HTML and CSS, and to write the message.', '', 'mail'));
     const form = editing ? `
       <div class="card channel-card">
         <h3>${editing.mode === 'add' ? 'New mail template' : 'Edit mail template'}</h3>
@@ -53,9 +53,9 @@ function renderMessageWording() {
       <h1 class="page-title">Message wording</h1>
       <p class="page-sub">Design how reminder emails and messages read. Use a template to send with it.</p>
       <div class="settings-actions" style="margin-bottom:16px;flex-wrap:wrap">
-        <button class="btn btn-primary" id="w-add">Add template</button>
-        <button class="btn" id="wording-copy-prompt" type="button">Copy AI prompt</button>
-        <button class="btn" id="wording-paste-open" type="button">Paste AI result</button>
+        <button class="btn btn-primary btn-with-icon" id="w-add">${iconHTML('plus')}<span class="btn-label">Add template</span></button>
+        <button class="btn btn-with-icon" id="wording-copy-prompt" type="button">${iconHTML('copy')}<span class="btn-label">Copy AI prompt</span></button>
+        <button class="btn btn-with-icon" id="wording-paste-open" type="button">${iconHTML('clipboard')}<span class="btn-label">Paste AI result</span></button>
       </div>
       ${pasteBox}
       ${cards}
@@ -63,12 +63,12 @@ function renderMessageWording() {
       <div id="wording-view-out"></div>
       <a href="#/settings" class="btn btn-ghost btn-sm" style="margin-top:16px">← Settings</a>
     `;
-    document.getElementById('app').innerHTML = shellHTML('/settings', main);
-    bindShell('/settings');
+    document.getElementById('app').innerHTML = shellHTML('/settings/wording', main, 'Settings · Message wording');
+    bindShell('/settings/wording');
     bindWordingEditor(templates);
   }).catch((err) => {
-    document.getElementById('app').innerHTML = shellHTML('/settings', `<h1 class="page-title">Message wording</h1>${emptyState('Could not load templates', escapeHTML(err.message))}`);
-    bindShell('/settings');
+    document.getElementById('app').innerHTML = shellHTML('/settings/wording', `<h1 class="page-title">Message wording</h1>${emptyState('Could not load templates', escapeHTML(err.message), '', 'warn')}`);
+    bindShell('/settings/wording');
   });
 }
 

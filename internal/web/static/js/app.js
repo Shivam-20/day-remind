@@ -2,6 +2,9 @@ const state = {
   user: null,
   reminders: [],
   filter: 'all',
+  search: '',
+  listFilter: '',
+  searchFocus: false,
 };
 
 function allRoutes() {
@@ -11,7 +14,8 @@ function allRoutes() {
     '/settings': renderSettings,
     '/settings/vacation': renderVacationSettings,
     '/settings/notifications': renderNotificationSettings,
-    '/settings/templates': renderMyTemplates,
+    // The old duplicate wording page now lands on the single wording screen.
+    '/settings/templates': () => renderMessageWording(),
     '/admin': renderAdmin,
     ...(window.DR_FEATURE_ROUTES || {}),
   };
@@ -58,7 +62,7 @@ function renderAuth(signup) {
     <div class="auth-wrap">
       <div class="auth-card card">
         <div class="auth-hero">
-          <h1><span style="color:var(--accent)">Day</span> Remind</h1>
+          <div class="brand"><span class="brand-logo" aria-hidden="true">D</span><span class="brand-name">Day Remind</span></div>
           <p>Never miss what matters.</p>
         </div>
         <form id="auth-form">
@@ -71,7 +75,7 @@ function renderAuth(signup) {
           ${signup ? 'Have an account?' : 'New here?'}
           <a href="#/${signup ? 'login' : 'signup'}">${signup ? 'Sign in' : 'Create account'}</a>
         </p>
-        <p style="text-align:center"><button type="button" class="btn btn-ghost btn-sm" id="theme-toggle">Toggle theme</button></p>
+        <p style="text-align:center;margin-bottom:0"><button type="button" class="icon-btn" id="theme-toggle" aria-label="Toggle theme">${actionIconSVG('moon')}</button></p>
       </div>
     </div>
   `;
@@ -101,62 +105,117 @@ function renderAuth(signup) {
   };
 }
 
-function shellNavHTML(active) {
-  const links = [
-    { href: '#/today', path: '/today', label: 'Today' },
-    { href: '#/calendar', path: '/calendar', label: 'Calendar' },
-    { href: '#/reminders', path: '/reminders', label: 'All reminders' },
-    { href: '#/lists', path: '/lists', label: 'Lists' },
-    { href: '#/settings', path: '/settings', label: 'Settings', match: (p) => p.startsWith('/settings') },
-    ...(isAdmin() ? [{ href: '#/admin', path: '/admin', label: 'Admin' }] : []),
-  ];
-  return links.map((l) => {
-    const on = l.match ? l.match(active) : active === l.path;
-    return `<a href="${l.href}" class="${on ? 'active' : ''}">${l.label}</a>`;
-  }).join('');
+function showKeyboardShortcutsDrawer() {
+  openDrawer('Keyboard shortcuts', `
+    <dl class="detail-list">
+      <dt><kbd>N</kbd></dt><dd>New reminder</dd>
+      <dt><kbd>⌘K</kbd> / <kbd>/</kbd></dt><dd>Search reminders</dd>
+      <dt><kbd>?</kbd></dt><dd>Show keyboard shortcuts</dd>
+      <dt><kbd>Esc</kbd></dt><dd>Close drawer or menu</dd>
+    </dl>
+  `, '<button class="btn" type="button" data-close-drawer>Close</button>');
 }
 
-function shellHTML(active, mainHTML) {
+// ---------------------------------------------------------------- shell
+
+function navCounts() {
+  const rs = state.reminders || [];
+  if (!rs.length) return {};
+  const now = new Date();
+  const todayN = rs.filter((r) => {
+    if (r.status === 'done' || r.status === 'cancelled') return false;
+    const d = new Date(r.due_at);
+    return d.toDateString() === now.toDateString() || d < now;
+  }).length;
+  const overdueN = rs.filter((r) => isOverdue(r)).length;
+  const listsN = new Set(rs.filter((r) => r.list_id).map((r) => r.list_id)).size;
+  return { today: todayN, overdue: overdueN, all: rs.length, lists: listsN };
+}
+
+function shellNavHTML(active) {
+  const c = navCounts();
+  const links = [
+    { href: '#/today', path: '/today', label: 'Today', icon: 'sun', count: c.today, hot: c.overdue },
+    { href: '#/calendar', path: '/calendar', label: 'Calendar', icon: 'calendar' },
+    { href: '#/lists', path: '/lists', label: 'Lists', icon: 'list', count: c.lists },
+    { href: '#/reminders', path: '/reminders', label: 'All reminders', icon: 'layers', count: c.all },
+  ];
+  const general = [
+    ...(isAdmin() ? [{ href: '#/admin', path: '/admin', label: 'Admin', icon: 'shield' }] : []),
+    { href: '#/settings', path: '/settings', label: 'Settings', icon: 'settings', match: (p) => p.startsWith('/settings') },
+  ];
+  const linkHTML = (l) => {
+    const on = l.match ? l.match(active) : active === l.path;
+    return `<a href="${l.href}" class="${on ? 'active' : ''}">${iconHTML(l.icon)}${l.label}${l.count != null ? ` <span class="nav-count${l.hot && l.hot > 0 && l.path === '/today' ? ' hot' : ''}">${l.count}</span>` : ''}</a>`;
+  };
+  return `
+    <div class="nav-section">Menu</div>
+    ${links.map(linkHTML).join('')}
+    <div class="nav-section">General</div>
+    ${general.map(linkHTML).join('')}`;
+}
+
+function shellHTML(active, mainHTML, crumbLabel) {
   const vacation = state.user?.notifications_paused
-    ? `<div class="vacation-banner"><span>Notifications paused${state.user.notifications_paused_until ? ' until ' + new Date(state.user.notifications_paused_until).toLocaleString() : ''}</span><button class="btn btn-sm" id="resume-vacation">Resume</button></div>`
+    ? `<div class="vacation-banner"><span>${iconHTML('bell-off')}Notifications paused${state.user.notifications_paused_until ? ' until ' + new Date(state.user.notifications_paused_until).toLocaleString() : ''}</span><button class="btn btn-sm" id="resume-vacation">Resume</button></div>`
     : '';
   const sidebarHidden = isSidebarHidden();
   const menuLabel = sidebarHidden ? 'Show menu' : 'Hide menu';
+  const crumb = crumbLabel || (active === '/today' ? 'Today' : active.split('/').filter(Boolean).map((s) => s[0].toUpperCase() + s.slice(1)).join(' · '));
+  const who = state.user?.display_name || state.user?.email || 'Day Remind';
+  const initial = (who[0] || 'D').toUpperCase();
   return `
     <div class="layout${sidebarHidden ? ' sidebar-hidden' : ''}">
       <aside class="sidebar" aria-label="Main navigation">
-        <div class="brand"><span>Day</span> Remind</div>
+        <div class="brand"><span class="brand-logo" aria-hidden="true">D</span><span class="brand-name">Day Remind</span></div>
         <nav class="nav">
           ${shellNavHTML(active)}
         </nav>
         <div class="sidebar-footer">
-          <button class="btn btn-sm" id="theme-toggle">Theme</button>
-          <button class="btn btn-sm" id="logout-btn">Logout</button>
+          <span class="user-chip" aria-hidden="true">${escapeHTML(initial)}</span>
+          <span class="user-chip-meta"><strong>${escapeHTML(state.user?.display_name || '')}</strong><span>${escapeHTML(state.user?.email || '')}</span></span>
+          <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">${actionIconSVG('moon')}</button>
+          <button class="icon-btn" id="logout-btn" aria-label="Log out">${actionIconSVG('log-out')}</button>
         </div>
       </aside>
       <div class="main">
         ${vacation}
         <header class="topbar">
           <div class="topbar-start">
-            <button type="button" class="btn btn-ghost btn-sm btn-with-icon sidebar-top-toggle" data-sidebar-toggle aria-expanded="${sidebarHidden ? 'false' : 'true'}" aria-label="${menuLabel}">
-              <span class="btn-icon" aria-hidden="true">${actionIconSVG('menu')}</span>
-            </button>
-            <strong>${escapeHTML(state.user?.display_name || state.user?.email || 'Day Remind')}</strong>
-            ${isAdmin() ? '<span class="badge badge-admin">Admin</span>' : ''}
+            <button type="button" class="icon-btn sidebar-top-toggle" data-sidebar-toggle aria-expanded="${sidebarHidden ? 'false' : 'true'}" aria-label="${menuLabel}">${actionIconSVG('menu')}</button>
+            <span class="topbar-crumb">${escapeHTML(crumb)} <span>· ${new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span></span>
+            ${isAdmin() ? '<span class="badge-admin">Admin</span>' : ''}
           </div>
-          <button class="btn btn-primary btn-sm" id="add-reminder-top">+ Add</button>
+          <button type="button" class="topbar-search" id="topbar-search">
+            ${iconHTML('search')}
+            Search reminders…
+            <kbd>⌘K</kbd>
+          </button>
+          <button class="btn btn-primary btn-sm btn-with-icon" id="add-reminder-top">${iconHTML('plus')}<span class="btn-label">New reminder</span></button>
         </header>
         <main id="main" class="page">${mainHTML}</main>
       </div>
     </div>
     <nav class="bottom-nav" aria-label="Mobile">
-      <a href="#/today" class="${active === '/today' ? 'active' : ''}">Today</a>
-      <a href="#/reminders" class="${active === '/reminders' ? 'active' : ''}">All</a>
-      <a href="#/settings" class="${active.startsWith('/settings') ? 'active' : ''}">Settings</a>
-      <a href="#/today" aria-label="Add" onclick="openCreateDrawer();return false;">Add</a>
+      <a href="#/today" class="${active === '/today' ? 'active' : ''}">${iconHTML('sun')}Today</a>
+      <a href="#/calendar" class="${active === '/calendar' ? 'active' : ''}">${iconHTML('calendar')}Calendar</a>
+      <a href="#/lists" class="${active === '/lists' ? 'active' : ''}">${iconHTML('list')}Lists</a>
+      <a href="#/reminders" class="${active === '/reminders' ? 'active' : ''}">${iconHTML('layers')}All</a>
+      <a href="#/settings" class="${active.startsWith('/settings') ? 'active' : ''}">${iconHTML('settings')}Settings</a>
     </nav>
-    <button class="fab" id="fab-add" aria-label="Add reminder">+</button>
+    <button class="fab" id="fab-add" aria-label="New reminder">${actionIconSVG('plus')}</button>
   `;
+}
+
+function focusGlobalSearch() {
+  if ((location.hash.replace('#', '') || '/today') !== '/reminders') {
+    state.searchFocus = true;
+    location.hash = '#/reminders';
+    // hashchange handler re-renders; nothing else to do.
+  } else {
+    document.getElementById('list-search')?.focus();
+    document.getElementById('list-search')?.select();
+  }
 }
 
 function bindShell(active) {
@@ -170,6 +229,7 @@ function bindShell(active) {
   });
   setSidebarHidden(isSidebarHidden());
   document.getElementById('theme-toggle')?.addEventListener('click', toggleTheme);
+  document.getElementById('topbar-search')?.addEventListener('click', focusGlobalSearch);
   document.getElementById('logout-btn')?.addEventListener('click', async () => {
     try {
       await API.post('/api/auth/logout');
@@ -180,8 +240,19 @@ function bindShell(active) {
     location.hash = '#/login';
     renderAuth(false);
   });
-  document.getElementById('add-reminder-top')?.addEventListener('click', openCreateDrawer);
-  document.getElementById('fab-add')?.addEventListener('click', openCreateDrawer);
+  const _openCreate = typeof openCreateDrawerEnhanced === 'function' ? openCreateDrawerEnhanced : openCreateDrawer;
+  document.getElementById('add-reminder-top')?.addEventListener('click', () => _openCreate());
+  document.getElementById('fab-add')?.addEventListener('click', () => _openCreate());
+  if (window._shellKbdHandler) document.removeEventListener('keydown', window._shellKbdHandler);
+  window._shellKbdHandler = (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+    if (document.querySelector('.drawer')) return;
+    if ((e.key === 'n' || e.key === 'N') && !e.metaKey && !e.ctrlKey) { e.preventDefault(); _openCreate(); }
+    if (e.key === '?') showKeyboardShortcutsDrawer();
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); focusGlobalSearch(); }
+    if (e.key === '/' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); focusGlobalSearch(); }
+  };
+  document.addEventListener('keydown', window._shellKbdHandler);
   document.getElementById('resume-vacation')?.addEventListener('click', async () => {
     try {
       state.user = await API.post('/api/me/notifications/resume');
@@ -223,67 +294,121 @@ async function loadReminders(params = '') {
   return state.reminders;
 }
 
-function reminderActions(item) {
-  const btns = [];
-  btns.push(reminderActionBtn({ action: 'detail', id: item.id, label: 'Details', icon: 'info' }));
-  const active = item.status !== 'done' && item.status !== 'cancelled';
-  if (active) {
-    btns.push(reminderActionBtn({ action: 'done', id: item.id, label: 'Done', icon: 'check' }));
+// ---------------------------------------------------------------- reminder actions
+
+function snoozeUntilTomorrow9am() {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  d.setHours(9, 0, 0, 0);
+  return d;
+}
+
+function confirmDeleteReminder(id, onConfirm) {
+  const drawer = openDrawer('Delete reminder', `
+    <p style="margin-top:0">This reminder will be permanently deleted.</p>
+    <p style="color:var(--danger);margin-bottom:0">This action cannot be undone.</p>
+  `, `<button class="btn" type="button" data-close-drawer>Cancel</button><button class="btn btn-danger" id="confirm-delete-go">Delete permanently</button>`);
+  drawer.querySelector('#confirm-delete-go')?.addEventListener('click', async () => {
+    try {
+      await API.delete(`/api/reminders/${id}`);
+      closeDrawer();
+      showToast('Reminder deleted');
+      await onConfirm();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+}
+
+async function runReminderAction(btn, rerender) {
+  const id = btn.dataset.id;
+  const action = btn.dataset.action;
+  if (action === 'detail') {
+    const open = window.openReminderDrawer;
+    if (typeof open === 'function') await open(id);
+    else showToast('Details not available', 'error');
+    return;
   }
-  if (item.status === 'paused') {
-    btns.push(reminderActionBtn({ action: 'resume', id: item.id, label: 'Resume', icon: 'play' }));
-  } else if (item.status === 'scheduled') {
-    btns.push(reminderActionBtn({ action: 'pause', id: item.id, label: 'Pause', icon: 'pause' }));
+  if (action === 'pin') await API.patch(`/api/reminders/${id}`, { pinned: true });
+  if (action === 'unpin') await API.patch(`/api/reminders/${id}`, { pinned: false });
+  if (action === 'done') await API.post(`/api/reminders/${id}/done`);
+  if (action === 'pause') await API.post(`/api/reminders/${id}/pause`);
+  if (action === 'resume') await API.post(`/api/reminders/${id}/resume`);
+  if (action === 'snooze') {
+    let until;
+    if (btn.dataset.snooze === 'tomorrow9') {
+      until = snoozeUntilTomorrow9am();
+    } else {
+      const mins = parseInt(btn.dataset.snoozeMinutes, 10);
+      if (!mins) {
+        showToast('Invalid snooze', 'error');
+        return;
+      }
+      until = new Date(Date.now() + mins * 60 * 1000);
+    }
+    await API.post(`/api/reminders/${id}/snooze`, { until: until.toISOString() });
   }
-  if (active) {
-    btns.push(reminderActionBtn({ action: 'snooze', id: item.id, label: '+15m', icon: 'clock', attrs: { 'snooze-minutes': '15' } }));
-    btns.push(reminderActionBtn({ action: 'snooze', id: item.id, label: '+1h', icon: 'clock', attrs: { 'snooze-minutes': '60' } }));
-    btns.push(reminderActionBtn({ action: 'snooze', id: item.id, label: 'Tomorrow', icon: 'sun', attrs: { snooze: 'tomorrow9' } }));
+  if (action === 'delete') {
+    confirmDeleteReminder(id, rerender);
+    return;
   }
-  btns.push(reminderActionBtn({ action: 'delete', id: item.id, label: 'Delete', icon: 'trash', className: 'btn-danger' }));
-  return btns.join('');
+  showToast(action === 'done' ? 'Nice — done' : 'Updated');
+  await rerender();
 }
 
 function bindReminderActions(container, rerender) {
   container.querySelectorAll('[data-action]').forEach((btn) => {
+    if (btn.classList.contains('row-check')) {
+      btn.addEventListener('change', async () => {
+        try {
+          await runReminderAction(btn, rerender);
+        } catch (err) {
+          btn.checked = false;
+          showToast(err.message, 'error');
+        }
+      });
+      return;
+    }
     btn.addEventListener('click', async () => {
-      const id = btn.dataset.id;
-      const action = btn.dataset.action;
       try {
-        if (action === 'detail') {
-          const open = window.openReminderDrawer;
-          if (typeof open === 'function') {
-            await open(id);
-          } else {
-            showToast('Details not available', 'error');
-          }
-          return;
-        }
-        if (action === 'done') await API.post(`/api/reminders/${id}/done`);
-        if (action === 'pause') await API.post(`/api/reminders/${id}/pause`);
-        if (action === 'resume') await API.post(`/api/reminders/${id}/resume`);
-        if (action === 'snooze') {
-          let until;
-          if (btn.dataset.snooze === 'tomorrow9') {
-            until = snoozeUntilTomorrow9am();
-          } else {
-            const mins = parseInt(btn.dataset.snoozeMinutes, 10);
-            if (!mins) {
-              showToast('Invalid snooze', 'error');
-              return;
-            }
-            until = new Date(Date.now() + mins * 60 * 1000);
-          }
-          await API.post(`/api/reminders/${id}/snooze`, { until: until.toISOString() });
-        }
-        if (action === 'delete') {
-          if (!confirm('Delete this reminder?')) return;
-          await API.delete(`/api/reminders/${id}`);
-        }
-        showToast('Updated');
-        await rerender();
+        closeAllMenus();
+        await runReminderAction(btn, rerender);
       } catch (err) {
         showToast(err.message, 'error');
+      }
+    });
+  });
+}
+
+// ---------------------------------------------------------------- today
+
+function statTilesHTML(m) {
+  const tile = (pill, cls, dotColor, label, num, ctx) => `
+    <button class="stat-card stat-tile ${cls}" type="button" data-pill="${pill}">
+      <span class="stat-lbl"><i style="background:${dotColor}" aria-hidden="true"></i>${label}</span>
+      <strong>${num}</strong>
+      <span class="stat-ctx">${ctx}</span>
+    </button>`;
+  return `
+    <div class="stats-row" role="group" aria-label="Summary">
+      ${tile('today', 'accent', 'var(--accent)', 'Due today', m.today, m.todayCtx)}
+      ${tile('overdue', 'danger', 'var(--danger)', 'Overdue', m.overdue, m.overdueCtx)}
+      ${tile('upcoming', '', 'var(--accent-2)', 'Upcoming', m.upcoming, m.upcomingCtx)}
+      ${tile('paused', '', 'var(--text-3)', 'Paused', m.paused, 'resume anytime')}
+      ${tile('done', 'done', 'var(--success)', 'Completed', m.doneWeek, 'this week')}
+    </div>`;
+}
+
+function bindStatTiles() {
+  document.querySelectorAll('.stat-tile[data-pill]').forEach((tile) => {
+    tile.addEventListener('click', () => {
+      const which = tile.dataset.pill;
+      if (which === 'today') document.getElementById('today-list')?.scrollIntoView({ behavior: 'smooth' });
+      else if (which === 'upcoming') document.getElementById('upcoming-groups')?.scrollIntoView({ behavior: 'smooth' });
+      else {
+        state.filter = which;
+        location.hash = '#/reminders';
+        renderReminders();
       }
     });
   });
@@ -301,55 +426,238 @@ async function renderToday() {
   });
   const upcoming = state.reminders.filter((r) => {
     const d = new Date(r.due_at);
-    return d > now && r.status === 'scheduled' && d.toDateString() !== now.toDateString();
-  }).slice(0, 5);
+    return d > now
+      && (r.status === 'scheduled' || r.status === 'paused')
+      && d.toDateString() !== now.toDateString();
+  });
   const paused = state.reminders.filter((r) => r.status === 'paused').length;
+  const upcomingAll = state.reminders.filter((r) => {
+    const d = new Date(r.due_at);
+    return d > now && r.status === 'scheduled';
+  });
+  const upcomingCount = upcomingAll.length;
+  const doneToday = state.reminders.filter((r) => {
+    const d = new Date(r.due_at);
+    return r.status === 'done' && d.toDateString() === now.toDateString();
+  }).length;
+  const doneWeek = state.reminders.filter((r) => {
+    if (r.status !== 'done' || !r.completed_at) return false;
+    return (now - new Date(r.completed_at)) / 86400000 <= 7;
+  }).length;
+  const oldestOverdue = overdue.reduce((a, r) => (new Date(r.due_at) < new Date(a.due_at) ? r : a), overdue[0]);
+  const nextUp = upcomingAll.slice().sort((a, b) => new Date(a.due_at) - new Date(b.due_at))[0];
+  const sortByPinned = (a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
+  today.sort(sortByPinned);
+  overdue.sort(sortByPinned);
+  upcoming.sort(sortByPinned);
 
   const main = `
-    <h1 class="page-title">Today</h1>
-    <p class="page-sub">${now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
-    <div class="stats-row">
-      <div class="stat-card"><strong>${today.length}</strong><span>Due today</span></div>
-      <div class="stat-card"><strong>${overdue.length}</strong><span>Overdue</span></div>
-      <div class="stat-card"><strong>${paused}</strong><span>Paused</span></div>
-      <div class="stat-card"><strong>${state.reminders.filter((r) => r.status === 'done').length}</strong><span>Done</span></div>
+    <div class="page-header-row">
+      <div>
+        <h1 class="page-title">Today</h1>
+        <p class="page-sub">${now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
+      </div>
     </div>
-    ${overdue.length ? `<h2 style="font-size:1rem;color:var(--danger)">Overdue</h2><div class="reminder-list">${overdue.map((r) => reminderCardHTML(r, reminderActions(r))).join('')}</div>` : ''}
-    <h2 style="font-size:1rem;margin-top:24px">Today</h2>
-    <div class="reminder-list" id="today-list">
-      ${today.length ? today.map((r) => reminderCardHTML(r, reminderActions(r))).join('') : ''}
-    </div>
-    ${upcoming.length ? `<h2 style="font-size:1rem;margin-top:24px">Upcoming</h2><div class="reminder-list">${upcoming.map((r) => reminderCardHTML(r, reminderActions(r))).join('')}</div>` : ''}
+    ${statTilesHTML({
+      today: today.length,
+      todayCtx: today.length || doneToday ? `${doneToday} done of ${today.length + doneToday}` : 'nothing scheduled',
+      overdue: overdue.length,
+      overdueCtx: overdue.length ? `oldest ${overdueAge(oldestOverdue)}` : 'all clear',
+      upcoming: upcomingCount,
+      upcomingCtx: nextUp ? `next: ${escapeHTML(nextUp.title.length > 26 ? nextUp.title.slice(0, 26) + '…' : nextUp.title)}` : 'nothing ahead',
+      paused,
+      doneWeek,
+    })}
+    ${overdue.length ? `
+      <div class="sec-head overdue"><h2>Overdue</h2><span class="sec-count">${overdue.length}</span></div>
+      <div class="reminder-list">${overdue.map((r) => reminderRowHTML(r)).join('')}</div>` : ''}
+    ${today.length ? `
+      <div class="sec-head"><h2>Today</h2><span class="sec-count">${today.length}</span></div>
+      <div class="reminder-list" id="today-list">${today.map((r) => reminderRowHTML(r)).join('')}</div>` : ''}
+    ${upcomingGroupsHTML(upcoming, now)}
   `;
   document.getElementById('app').innerHTML = shellHTML('/today', main);
   bindShell('/today');
+  bindStatTiles();
   bindReminderActions(document.getElementById('app'), () => renderToday());
+  bindUpcomingShowMore();
+}
+
+function upcomingDayLabel(date, now) {
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  const in7 = new Date(now);
+  in7.setDate(now.getDate() + 7);
+  if (date.toDateString() === tomorrow.toDateString()) return 'Tomorrow';
+  if (date <= in7) return date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+  return date.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+}
+
+function upcomingGroupsHTML(upcoming, now) {
+  if (!upcoming.length) return '';
+  const groups = [];
+  const seen = new Map();
+  for (const r of upcoming) {
+    const d = new Date(r.due_at);
+    const key = d.toDateString();
+    if (!seen.has(key)) {
+      seen.set(key, groups.length);
+      groups.push({ label: upcomingDayLabel(d, now), items: [] });
+    }
+    groups[seen.get(key)].items.push(r);
+  }
+
+  const INITIAL_GROUPS = 3;
+  const visibleGroups = groups.slice(0, INITIAL_GROUPS);
+  const hiddenGroups = groups.slice(INITIAL_GROUPS);
+  const hasMore = hiddenGroups.length > 0;
+
+  function groupHTML(g) {
+    return `
+      <div class="upcoming-group">
+        <div class="sec-head"><h2>${escapeHTML(g.label)}</h2><span class="sec-count">${g.items.length}</span></div>
+        <div class="reminder-list">${g.items.map((r) => reminderRowHTML(r)).join('')}</div>
+      </div>`;
+  }
+
+  const hiddenHTML = hiddenGroups.map(groupHTML).join('');
+  const totalHidden = hiddenGroups.reduce((n, g) => n + g.items.length, 0);
+
+  return `
+    <div class="sec-head" style="margin-top:28px">
+      <h2>Upcoming</h2><span class="sec-count">${upcoming.length}</span>
+      <a href="#/reminders" class="sec-link">View all →</a>
+    </div>
+    <div id="upcoming-groups">
+      ${visibleGroups.map(groupHTML).join('')}
+      ${hasMore ? `
+        <div id="upcoming-hidden" hidden>${hiddenHTML}</div>
+        <button class="btn btn-ghost btn-sm" id="upcoming-show-more">Show ${totalHidden} more reminder${totalHidden !== 1 ? 's' : ''}</button>
+      ` : ''}
+    </div>
+  `;
+}
+
+function bindUpcomingShowMore() {
+  document.getElementById('upcoming-show-more')?.addEventListener('click', (e) => {
+    const hidden = document.getElementById('upcoming-hidden');
+    const btn = e.currentTarget;
+    if (hidden) hidden.hidden = false;
+    btn.remove();
+  });
+}
+
+// ---------------------------------------------------------------- all reminders
+
+function dateGroupLabel(d, now) {
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  if (d.toDateString() === now.toDateString()) return 'Today';
+  if (d.toDateString() === tomorrow.toDateString()) return 'Tomorrow';
+  return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+}
+
+// Groups a flat reminder list into display sections; done items sink to the end.
+function groupReminders(items, now) {
+  const groups = [];
+  const seen = new Map();
+  const doneItems = [];
+  const push = (key, label, cls, item) => {
+    if (!seen.has(key)) {
+      seen.set(key, groups.length);
+      groups.push({ key, label, cls, items: [] });
+    }
+    groups[seen.get(key)].items.push(item);
+  };
+  for (const r of items) {
+    if (r.status === 'done') { doneItems.push(r); continue; }
+    if (isOverdue(r)) { push('overdue', 'Overdue', 'overdue', r); continue; }
+    const d = new Date(r.due_at);
+    push(`d-${d.toDateString()}`, dateGroupLabel(d, now), '', r);
+  }
+  if (doneItems.length) push('done', 'Completed', '', ...doneItems);
+  return groups;
 }
 
 async function renderReminders() {
-  const status = state.filter === 'all' ? '' : state.filter;
-  await loadReminders(status ? `?status=${encodeURIComponent(status)}` : '');
+  const q = state.search.trim();
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  await loadReminders(params.toString() ? `?${params}` : '');
+
+  let items = state.reminders.slice();
+  if (state.filter !== 'all') items = items.filter((r) => r.status === state.filter);
+  if (state.listFilter) items = items.filter((r) => r.list_id === state.listFilter);
+  items.sort((a, b) => new Date(a.due_at) - new Date(b.due_at));
+
+  const now = new Date();
+  const counts = {
+    all: state.reminders.length,
+    scheduled: state.reminders.filter((r) => r.status === 'scheduled').length,
+    paused: state.reminders.filter((r) => r.status === 'paused').length,
+    done: state.reminders.filter((r) => r.status === 'done').length,
+  };
   const chips = ['all', 'scheduled', 'paused', 'done'].map((f) =>
-    `<button class="filter-chip ${state.filter === f ? 'active' : ''}" data-filter="${f}">${f}</button>`
+    `<button class="filter-chip ${state.filter === f ? 'active' : ''}" data-filter="${f}"><b>${f === 'all' ? 'All' : f}</b><span class="chip-count">${counts[f]}</span></button>`
   ).join('');
+
+  const listFilterName = state.listFilter
+    ? (state.listFilterName || state.listFilter.slice(0, 8))
+    : '';
+
+  const groups = groupReminders(items, now);
+  const groupedHTML = groups.length
+    ? groups.map((g) => `
+        <div class="sec-head ${g.cls}"><h2>${escapeHTML(g.label)}</h2><span class="sec-count">${g.items.length}</span></div>
+        <div class="reminder-list">${g.items.map((r) => reminderRowHTML(r)).join('')}</div>`).join('')
+    : emptyState(q ? 'No matches' : 'No reminders', q ? `Nothing matches “${escapeHTML(q)}”.` : 'Create one to get started.', '', q ? 'search' : 'inbox');
+
   const main = `
-    <h1 class="page-title">All reminders</h1>
-    <p class="page-sub">${state.reminders.length} items</p>
-    <div class="filter-row">${chips}</div>
-    <div class="reminder-list" id="all-list">
-      ${state.reminders.length ? state.reminders.map((r) => reminderCardHTML(r, reminderActions(r))).join('') : emptyState('No reminders', 'Create one to get started.')}
+    <div class="page-header-row">
+      <div>
+        <h1 class="page-title">All reminders</h1>
+        <p class="page-sub">${items.length} shown · ${state.reminders.length} total</p>
+      </div>
     </div>
+    <div class="list-tools">
+      <span class="list-tools-search">${actionIconSVG('search')}<input id="list-search" type="search" placeholder="Search by title…" value="${escapeHTML(state.search)}" aria-label="Search reminders"></span>
+    </div>
+    ${state.listFilter ? `<div class="pill-row"><span class="pill-note">${iconHTML('list')}List: ${escapeHTML(listFilterName)}<button id="clear-list-filter" aria-label="Clear list filter">${actionIconSVG('x')}</button></span></div>` : ''}
+    <div class="filter-row">${chips}</div>
+    ${groupedHTML}
   `;
   document.getElementById('app').innerHTML = shellHTML('/reminders', main);
   bindShell('/reminders');
   bindReminderActions(document.getElementById('app'), () => renderReminders());
+
+  const searchInput = document.getElementById('list-search');
+  if (state.searchFocus) {
+    state.searchFocus = false;
+    searchInput?.focus();
+    searchInput?.select();
+  }
+  let debounce = null;
+  searchInput?.addEventListener('input', () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(() => {
+      state.search = searchInput.value;
+      renderReminders();
+    }, 300);
+  });
   document.querySelectorAll('[data-filter]').forEach((chip) => {
     chip.addEventListener('click', () => {
       state.filter = chip.dataset.filter;
       renderReminders();
     });
   });
+  document.getElementById('clear-list-filter')?.addEventListener('click', () => {
+    state.listFilter = '';
+    state.listFilterName = '';
+    renderReminders();
+  });
 }
+
+// ---------------------------------------------------------------- settings
 
 async function renderSettings(route = '/settings') {
   if (route === '/settings/vacation') {
@@ -360,37 +668,41 @@ async function renderSettings(route = '/settings') {
     await renderNotificationSettings();
     return;
   }
-  if (route === '/settings/templates') {
-    await renderMyTemplates();
-    return;
-  }
+  let notifyCfg = {};
+  try { notifyCfg = await API.get('/api/me/notify'); } catch {}
+  const emailStatus = notifyCfg.email_enabled ? 'Email on' : (notifyCfg.channels?.email_configured ? 'Email off' : 'Not configured');
+  const tgStatus = notifyCfg.telegram_linked ? 'Telegram linked' : 'Not linked';
   const main = `
     <h1 class="page-title">Settings</h1>
     <p class="page-sub">Manage your account and preferences</p>
     <div class="settings-grid">
       <div class="card settings-card" data-href="#/settings/notifications">
-        <h3>Notifications</h3>
+        <h3>${iconHTML('bell')}Notifications</h3>
         <p>Email and Telegram delivery, plus how far ahead to warn you.</p>
+        <p class="settings-card-status">${escapeHTML(emailStatus)} · ${escapeHTML(tgStatus)}</p>
       </div>
       <div class="card settings-card" data-href="#/settings/wording">
-        <h3>Message wording</h3>
+        <h3>${iconHTML('mail')}Message wording</h3>
         <p>Customise how your reminders read, or keep the defaults.</p>
       </div>
       <div class="card settings-card" data-href="#/settings/vacation">
-        <h3>Vacation & Pause</h3>
+        <h3>${iconHTML('moon')}Vacation &amp; pause</h3>
         <p>Pause all notifications or review paused reminders.</p>
+        ${state.user?.notifications_paused ? '<p class="settings-card-status" style="color:var(--danger)">Notifications paused</p>' : ''}
       </div>
-      <div class="card settings-card">
-        <h3>Profile</h3>
+      <div class="card settings-card is-dead">
+        <h3>${iconHTML('panel')}Profile</h3>
         <p>${escapeHTML(state.user.email)} · ${escapeHTML(state.user.timezone)}</p>
       </div>
-      <div class="card settings-card">
-        <h3>Data export / import</h3>
-        <p>JSON backup — coming in next release.</p>
+      <div class="card settings-card is-dead">
+        <h3>${iconHTML('download')}Data export / import</h3>
+        <p>JSON backup of your reminders.</p>
+        <span class="soon">Coming soon</span>
       </div>
-      <div class="card settings-card">
-        <h3>Google / Gmail sync</h3>
-        <p>Connect Google — coming in next release.</p>
+      <div class="card settings-card is-dead">
+        <h3>${iconHTML('mail')}Google / Gmail sync</h3>
+        <p>Connect Google for calendar sync.</p>
+        <span class="soon">Coming soon</span>
       </div>
     </div>
   `;
@@ -403,7 +715,7 @@ async function renderSettings(route = '/settings') {
 
 async function renderVacationSettings() {
   const main = `
-    <h1 class="page-title">Vacation & Pause</h1>
+    <h1 class="page-title">Vacation &amp; pause</h1>
     <p class="page-sub">Pause all outbound notifications while you're away.</p>
     <div class="card" style="margin-bottom:16px">
       <p style="margin:0 0 12px">Status: <strong>${state.user.notifications_paused ? 'Paused' : 'Active'}</strong></p>
@@ -438,18 +750,40 @@ async function renderVacationSettings() {
   });
 }
 
-function openCreateDrawer() {
-  const defaultDue = new Date();
-  defaultDue.setHours(defaultDue.getHours() + 1, 0, 0, 0);
-  const drawer = openDrawer('New reminder', `
-    <div class="field"><label for="r-title">Title</label><input id="r-title" required></div>
-    <div class="field"><label for="r-desc">Description</label><textarea id="r-desc" rows="3"></textarea></div>
-    ${dueFieldsHTML(defaultDue)}
-    <div class="field"><label for="r-priority">Priority</label>
-      <select id="r-priority"><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option><option value="low">Low</option></select>
+// ---------------------------------------------------------------- reminder drawers
+
+function reminderFormFields({ title, description, due, recurrence, priority }) {
+  return `
+    <div class="field">
+      <label for="r-title"><span class="form-label-icon">${actionIconSVG('type')}Title</span></label>
+      <input id="r-title" value="${escapeHTML(title || '')}" required>
     </div>
-  `, `<button class="btn" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" id="save-reminder">Save</button>`);
+    <div class="field">
+      <label for="r-desc"><span class="form-label-icon">${actionIconSVG('align-left')}Notes <span style="text-transform:none;font-weight:400;letter-spacing:0">(optional)</span></span></label>
+      <textarea id="r-desc" rows="2" placeholder="Add details…">${escapeHTML(description || '')}</textarea>
+    </div>
+    ${dueFieldsHTML(due)}
+    <div class="two-col">
+      ${repeatFieldsHTML(recurrence || '')}
+      ${priorityFieldsHTML(priority || 'normal')}
+    </div>`;
+}
+
+function bindReminderForm(drawer) {
   bindDueFields(drawer);
+  bindChoiceControls(drawer);
+}
+
+function openCreateDrawer(defaultDate) {
+  const defaultDue = defaultDate
+    ? new Date(defaultDate)
+    : new Date();
+  if (!defaultDate) defaultDue.setHours(defaultDue.getHours() + 1, 0, 0, 0);
+  else defaultDue.setHours(9, 0, 0, 0);
+  const drawer = openDrawer('New reminder', `
+    ${reminderFormFields({ due: defaultDue })}
+  `, `<button class="btn" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" id="save-reminder">Save reminder</button>`);
+  bindReminderForm(drawer);
   drawer.querySelector('#save-reminder').addEventListener('click', async () => {
     const title = document.getElementById('r-title').value.trim();
     const dueLocal = readDueLocal(drawer);
@@ -464,6 +798,7 @@ function openCreateDrawer() {
         due_at: new Date(dueLocal).toISOString(),
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         priority: document.getElementById('r-priority').value,
+        recurrence: readRepeat(drawer),
       });
       closeDrawer();
       showToast('Reminder created');
@@ -474,6 +809,57 @@ function openCreateDrawer() {
     }
   });
 }
+
+async function openReminderDrawer(id) {
+  let reminder;
+  try {
+    reminder = await API.get(`/api/reminders/${id}`);
+  } catch (err) {
+    showToast(err.message, 'error');
+    return;
+  }
+  const due = new Date(reminder.due_at);
+  const drawer = openDrawer('Edit reminder', `
+    ${reminderFormFields({
+      title: reminder.title,
+      description: reminder.description,
+      due,
+      recurrence: reminder.recurrence,
+      priority: reminder.priority,
+    })}
+    <dl class="detail-list">
+      <dt>Status</dt><dd>${escapeHTML(reminder.status)}</dd>
+      <dt>Created</dt><dd>${escapeHTML(new Date(reminder.created_at).toLocaleDateString())}</dd>
+    </dl>
+  `, `<button class="btn" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" id="save-reminder">Save changes</button>`);
+  bindReminderForm(drawer);
+  drawer.querySelector('#save-reminder').addEventListener('click', async () => {
+    const title = document.getElementById('r-title').value.trim();
+    const dueLocal = readDueLocal(drawer);
+    if (!title || !dueLocal) {
+      showToast('Title and due date required', 'error');
+      return;
+    }
+    try {
+      await API.patch(`/api/reminders/${id}`, {
+        title,
+        description: document.getElementById('r-desc').value,
+        due_at: new Date(dueLocal).toISOString(),
+        timezone: reminder.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+        priority: document.getElementById('r-priority').value,
+        recurrence: readRepeat(drawer),
+      });
+      closeDrawer();
+      showToast('Reminder updated');
+      const route = location.hash.replace('#', '') || '/today';
+      renderApp(route);
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+}
+
+window.openReminderDrawer = openReminderDrawer;
 
 // ---------------------------------------------------------------- admin panel
 
@@ -591,7 +977,7 @@ async function renderAdminUsers() {
     await loadAdmin();
   } catch (err) {
     document.getElementById('app').innerHTML = shellHTML('/admin',
-      `<h1 class="page-title">Admin</h1>${emptyState('Could not load the panel', escapeHTML(err.message))}`);
+      `<h1 class="page-title">Admin</h1>${emptyState('Could not load the panel', escapeHTML(err.message), '', 'warn')}`);
     bindShell('/admin');
     return;
   }
@@ -634,7 +1020,7 @@ async function renderAdminUsers() {
         </thead>
         <tbody>${rows.map(adminUserRow).join('')}</tbody>
       </table>
-    </div>` : emptyState('No matching users', 'Try a different search.')}
+    </div>` : emptyState('No matching users', 'Try a different search.', '', 'search')}
   `;
 
   adminShell(main, 'Instance overview and user management');
@@ -780,7 +1166,7 @@ async function renderNotificationSettings() {
     cfg = await API.get('/api/me/notify');
   } catch (err) {
     document.getElementById('app').innerHTML = shellHTML('/settings',
-      `<h1 class="page-title">Notifications</h1>${emptyState('Could not load settings', escapeHTML(err.message))}`);
+      `<h1 class="page-title">Notifications</h1>${emptyState('Could not load settings', escapeHTML(err.message), '', 'warn')}`);
     bindShell('/settings');
     return;
   }
@@ -792,54 +1178,62 @@ async function renderNotificationSettings() {
     <h1 class="page-title">Notifications</h1>
     <p class="page-sub">Choose how Day Remind reaches you.</p>
 
-    <div class="card channel-card">
+    <div class="card channel-card" style="margin-top:16px">
       <div class="channel-head">
-        <div>
-          <h3>Email</h3>
-          <p class="channel-sub">Delivered over SMTP.</p>
+        <div class="channel-title">
+          <span class="channel-ico ico-mail">${actionIconSVG('mail')}</span>
+          <div>
+            <h3>Email</h3>
+            <p>Delivered over SMTP · instance server</p>
+          </div>
         </div>
-        <label class="switch">
-          <input type="checkbox" id="email-enabled" ${cfg.email_enabled ? 'checked' : ''} ${emailReady ? '' : 'disabled'}>
-          <span>Enabled</span>
-        </label>
+        ${emailReady ? '<span class="badge badge-ok">Configured</span>' : ''}
+        ${switchHTML('email-enabled', cfg.email_enabled, 'Email enabled', !emailReady)}
       </div>
       ${emailReady ? `
-        <div class="field">
-          <label for="email-address">Send to</label>
-          <input id="email-address" type="email" value="${escapeHTML(cfg.email_address || '')}" autocomplete="email">
-        </div>` : `<p class="channel-warn">Not configured on this server — set <code>SMTP_HOST</code> and <code>SMTP_FROM</code>.</p>`}
+        <div class="channel-body">
+          <span class="channel-lbl">Send to</span>
+          <input id="email-address" type="email" style="flex:1 1 200px" value="${escapeHTML(cfg.email_address || '')}" autocomplete="email" aria-label="Email address">
+        </div>` : `<p class="channel-warn" style="margin-top:12px">Not configured on this server — set <code>SMTP_HOST</code> and <code>SMTP_FROM</code>.</p>`}
     </div>
 
     <div class="card channel-card">
       <div class="channel-head">
-        <div>
-          <h3>Telegram</h3>
-          <p class="channel-sub">${cfg.telegram_linked ? 'This account is linked to a chat.' : 'Link a chat to receive reminders there.'}</p>
+        <div class="channel-title">
+          <span class="channel-ico ico-tg">${actionIconSVG('send')}</span>
+          <div>
+            <h3>Telegram</h3>
+            <p>${cfg.telegram_linked ? 'This account is linked to a chat.' : 'Link a chat to receive reminders there.'}</p>
+          </div>
         </div>
-        <label class="switch">
-          <input type="checkbox" id="tg-enabled" ${cfg.telegram_enabled ? 'checked' : ''} ${tgReady && cfg.telegram_linked ? '' : 'disabled'}>
-          <span>Enabled</span>
-        </label>
+        ${cfg.telegram_linked ? '<span class="badge badge-ok">Linked</span>' : ''}
+        ${switchHTML('tg-enabled', cfg.telegram_enabled, 'Telegram enabled', !(tgReady && cfg.telegram_linked))}
       </div>
       ${!tgReady
-        ? `<p class="channel-warn">Not configured on this server — set <code>TELEGRAM_BOT_TOKEN</code>.</p>`
+        ? `<p class="channel-warn" style="margin-top:12px">Not configured on this server — set <code>TELEGRAM_BOT_TOKEN</code>.</p>`
         : cfg.telegram_linked
-          ? `<div class="channel-actions">
-               <span class="badge badge-linked">Linked</span>
+          ? `<div class="channel-actions" style="margin-top:12px">
                <button class="btn btn-sm" id="tg-unlink">Unlink this chat</button>
              </div>`
-          : `<div class="channel-actions">
+          : `<div class="channel-actions" style="margin-top:12px">
                <button class="btn btn-sm btn-primary" id="tg-link">Get link code</button>
              </div>
              <div id="tg-link-out"></div>`}
     </div>
 
     <div class="card channel-card">
-      <h3>Advance warning</h3>
-      <p class="channel-sub">An extra heads-up before each reminder is due.</p>
-      <div class="field">
-        <label for="advance-minutes">Warn me</label>
-        <select id="advance-minutes">
+      <div class="channel-head">
+        <div class="channel-title">
+          <span class="channel-ico ico-clock">${actionIconSVG('alarm-clock')}</span>
+          <div>
+            <h3>Advance warning</h3>
+            <p>An extra heads-up before each reminder is due.</p>
+          </div>
+        </div>
+      </div>
+      <div class="channel-body">
+        <span class="channel-lbl">Warn me</span>
+        <select id="advance-minutes" aria-label="Advance warning">
           ${ADVANCE_CHOICES.map(([v, label]) =>
             `<option value="${v}" ${cfg.advance_minutes === v ? 'selected' : ''}>${label}</option>`).join('')}
         </select>
@@ -850,9 +1244,9 @@ async function renderNotificationSettings() {
       <summary><h3>Use my own mail server</h3></summary>
       <p class="channel-sub">Send your reminders through your own SMTP server instead of the instance's.
         Your password is encrypted before it is stored, but whoever runs this server can decrypt it.</p>
-      <label class="switch" style="margin-bottom:12px">
-        <input type="checkbox" id="u-smtp-enabled" ${cfg.own_smtp.enabled ? 'checked' : ''}>
-        <span>Use my server</span>
+      <label class="channel-lbl" style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        ${switchHTML('u-smtp-enabled', cfg.own_smtp.enabled, 'Use my server')}
+        Use my server
       </label>
       <div class="form-grid">
         <div class="field"><label for="u-smtp-host">Host</label>
@@ -878,9 +1272,9 @@ async function renderNotificationSettings() {
       <summary><h3>Use my own Telegram bot</h3></summary>
       <p class="channel-sub">Deliver to a bot you control. Your own bot only sends notifications —
         commands like /add still go to the shared bot.</p>
-      <label class="switch" style="margin-bottom:12px">
-        <input type="checkbox" id="u-tg-enabled" ${cfg.own_telegram.enabled ? 'checked' : ''}>
-        <span>Use my bot</span>
+      <label class="channel-lbl" style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        ${switchHTML('u-tg-enabled', cfg.own_telegram.enabled, 'Use my bot')}
+        Use my bot
       </label>
       <div class="field">
         <label for="u-tg-token">Bot token ${cfg.own_telegram.token_set ? '<span class="cred-ok">stored</span>' : '<span class="cred-none">not set</span>'}</label>
@@ -899,14 +1293,14 @@ async function renderNotificationSettings() {
     <div class="settings-actions">
       <button class="btn btn-primary" id="notify-save">Save changes</button>
       <button class="btn" id="notify-test">Send test notification</button>
-      <a href="#/settings/templates" class="btn btn-ghost btn-sm">Message wording →</a>
+      <a href="#/settings/wording" class="btn btn-ghost btn-sm">Message wording →</a>
       <a href="#/settings" class="btn btn-ghost btn-sm">← Back</a>
     </div>
     <div id="notify-result"></div>
   `;
 
-  document.getElementById('app').innerHTML = shellHTML('/settings', main);
-  bindShell('/settings');
+  document.getElementById('app').innerHTML = shellHTML('/settings/notifications', main, 'Settings · Notifications');
+  bindShell('/settings/notifications');
   bindNotificationSettings(cfg);
   bindOwnServerForms();
 }
@@ -1008,7 +1402,7 @@ async function renderAdminDelivery() {
   try {
     cfg = await API.get('/api/admin/settings');
   } catch (err) {
-    adminShell(emptyState('Could not load settings', escapeHTML(err.message)), 'Delivery configuration');
+    adminShell(emptyState('Could not load settings', escapeHTML(err.message), '', 'warn'), 'Delivery configuration');
     return;
   }
   adminState.settings = cfg;
@@ -1018,14 +1412,14 @@ async function renderAdminDelivery() {
   const body = `
     <div class="card channel-card">
       <div class="channel-head">
-        <div>
-          <h3>Email (SMTP)</h3>
-          <p class="channel-sub">Used for everyone who has not configured their own mail server.</p>
+        <div class="channel-title">
+          <span class="channel-ico ico-mail">${actionIconSVG('mail')}</span>
+          <div>
+            <h3>Email (SMTP)</h3>
+            <p>Used for everyone who has not configured their own mail server.</p>
+          </div>
         </div>
-        <label class="switch">
-          <input type="checkbox" id="a-smtp-enabled" ${smtp.enabled ? 'checked' : ''}>
-          <span>Enabled</span>
-        </label>
+        ${switchHTML('a-smtp-enabled', smtp.enabled, 'SMTP enabled')}
       </div>
       <div class="form-grid">
         <div class="field"><label for="a-smtp-host">Host</label>
@@ -1045,14 +1439,14 @@ async function renderAdminDelivery() {
 
     <div class="card channel-card">
       <div class="channel-head">
-        <div>
-          <h3>Telegram bot</h3>
-          <p class="channel-sub">The shared bot. It serves commands and delivers to anyone who has linked a chat.</p>
+        <div class="channel-title">
+          <span class="channel-ico ico-tg">${actionIconSVG('send')}</span>
+          <div>
+            <h3>Telegram bot</h3>
+            <p>The shared bot. It serves commands and delivers to anyone who has linked a chat.</p>
+          </div>
         </div>
-        <label class="switch">
-          <input type="checkbox" id="a-tg-enabled" ${tg.enabled ? 'checked' : ''}>
-          <span>Enabled</span>
-        </label>
+        ${switchHTML('a-tg-enabled', tg.enabled, 'Telegram enabled')}
       </div>
       ${secretField('a-tg-token', 'Bot token', { set: tg.token_set, hint: tg.token_hint, unreadable: tg.unreadable })}
       <p class="channel-sub">Create one with <strong>@BotFather</strong>. Changing the token takes effect within a few seconds — no restart needed.</p>
@@ -1226,22 +1620,8 @@ function mailPreviewAPI(scope) {
   return scope === 'admin' ? '/api/admin/templates/preview' : '/api/me/templates/preview';
 }
 
-const MAIL_AI_PROMPT = `You are designing a reminder notification template for Day Remind.
-Return ONLY valid JSON (no markdown code fences, no commentary) with exactly these keys:
-"name", "email_subject", "email_html", "email_css", "email_text", "telegram_text"
-
-Use Go text/template actions for dynamic content (not your own placeholder syntax):
-{{.Title}}, {{.Description}}, {{.DueAt}}, {{.Timezone}}, {{.Priority}}, {{.Advance}}, {{.LeadTime}}
-Use {{if .Advance}}...{{else}}...{{end}} where the wording should differ for an early warning vs the due notice.
-
-Rules:
-- email_html: HTML for the email body (fragment or full document).
-- email_css: CSS rules only — no <style> wrapper, no <script>.
-- email_text: plain-text alternative for mail clients that skip HTML.
-- telegram_text: Telegram message body (plain text is safest).
-- name: short label for the template, e.g. "Friendly bill reminder".
-
-Sample data: Title "Pay electricity bill", Description "Account 12345", Priority "high", DueAt like "Thu, 25 Dec 2026 09:00 IST".`;
+// MAIL_AI_PROMPT, parseMailAIResult, copyMailAIPrompt and the inbox-style
+// preview live in wording-ai.js so the wording page and this panel share them.
 
 let mailPasteOpen = false;
 
@@ -1256,57 +1636,14 @@ function mailPayloadFromTemplate(t) {
   };
 }
 
-function mailPreviewAsInboxHTML(res) {
-  return ['due', 'advance'].map((kind) => {
-    const p = res[kind] || {};
-    const label = kind === 'due' ? 'At the due time' : 'Advance notice';
-    return `
-      <div class="card channel-card mail-preview-card">
-        <h3>View as mail — ${label}</h3>
-        ${(p.warnings || []).map((w) => `<p class="test-result bad">${escapeHTML(w)}</p>`).join('')}
-        <div class="mail-preview-inbox">
-          <span class="mail-preview-from">Day Remind</span>
-          <p class="mail-preview-subject">${escapeHTML(p.subject || '(no subject)')}</p>
-        </div>
-        <iframe class="preview-frame mail-preview-frame" sandbox srcdoc="${escapeHTML(p.html || '')}" title="Email preview"></iframe>
-        <p class="preview-label">Plain text alternative</p>
-        <pre class="preview-pre">${escapeHTML(p.text || '')}</pre>
-      </div>`;
-  }).join('');
-}
-
-async function copyMailAIPrompt() {
-  try {
-    await navigator.clipboard.writeText(MAIL_AI_PROMPT);
-    showToast('AI prompt copied');
-  } catch {
-    showToast('Could not copy — check browser permissions', 'error');
-  }
-}
-
-function parseMailAIResult(raw) {
-  let text = raw.trim();
-  const fence = text.match(/^```(?:json)?\s*([\s\S]*?)```$/i);
-  if (fence) text = fence[1].trim();
-  const data = JSON.parse(text);
-  const keys = ['name', 'email_subject', 'email_html', 'email_css', 'email_text', 'telegram_text'];
-  const out = {};
-  for (const k of keys) {
-    if (data[k] != null) out[k] = String(data[k]);
-  }
-  if (!out.name) out.name = 'AI template';
-  out.telegram_parse_mode = 'plain';
-  return out;
-}
-
 function mailTemplateCards(templates, editorOpen) {
   if (!templates.length) {
     if (editorOpen) return '';
-    return emptyState('No mail templates yet', 'Add one to design the email with HTML and CSS, and to write the message.', '');
+    return emptyState('No mail templates yet', 'Add one to design the email with HTML and CSS, and to write the message.', '', 'mail');
   }
   return `<div class="template-grid">${templates.map((t) => `
     <article class="card template-card">
-      <h3>${escapeHTML(t.name)}${t.active ? ' <span class="badge">In use</span>' : ''}</h3>
+      <h3>${escapeHTML(t.name)}${t.active ? ' <span class="badge badge-ok">In use</span>' : ''}</h3>
       <p class="page-sub">${escapeHTML(t.email_subject || 'Default subject')}</p>
       <div class="settings-actions">
         <button class="btn btn-sm btn-primary" data-use-mail="${t.id}"${t.active ? ' disabled' : ''}>Use</button>
@@ -1322,7 +1659,7 @@ async function renderAdminTemplates() {
   try {
     cfg = await API.get('/api/admin/settings');
   } catch (err) {
-    adminShell(emptyState('Could not load templates', escapeHTML(err.message)), 'Notification templates');
+    adminShell(emptyState('Could not load templates', escapeHTML(err.message), '', 'warn'), 'Notification templates');
     return;
   }
   adminState.settings = cfg;
@@ -1330,7 +1667,7 @@ async function renderAdminTemplates() {
   try {
     lib = await API.get('/api/admin/mail-templates');
   } catch (err) {
-    adminShell(emptyState('Could not load templates', escapeHTML(err.message)), 'Notification templates');
+    adminShell(emptyState('Could not load templates', escapeHTML(err.message), '', 'warn'), 'Notification templates');
     return;
   }
   adminShell(mailLibraryHTML(lib, cfg.variables, 'admin'), 'Notification templates');
@@ -1632,30 +1969,4 @@ function bindMailLibrary(scope, after) {
       out.innerHTML = `<p class="test-result bad">${escapeHTML(err.message)}</p>`;
     }
   });
-}
-
-async function renderMyTemplates() {
-  let cfg;
-  let lib;
-  try {
-    [cfg, lib] = await Promise.all([
-      API.get('/api/me/templates'),
-      API.get('/api/me/mail-templates'),
-    ]);
-  } catch (err) {
-    document.getElementById('app').innerHTML = shellHTML('/settings',
-      `<h1 class="page-title">Message wording</h1>${emptyState('Could not load templates', escapeHTML(err.message))}`);
-    bindShell('/settings');
-    return;
-  }
-
-  const main = `
-    <h1 class="page-title">Message wording</h1>
-    <p class="page-sub">Design how your reminders read. A template you mark as in use is the one that gets sent.</p>
-    ${mailLibraryHTML(lib, cfg.variables, 'user')}
-    <a href="#/settings/notifications" class="btn btn-ghost btn-sm" style="margin-top:16px">← Notifications</a>
-  `;
-  document.getElementById('app').innerHTML = shellHTML('/settings', main);
-  bindShell('/settings');
-  bindMailLibrary('user', renderMyTemplates);
 }

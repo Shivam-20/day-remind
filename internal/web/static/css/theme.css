@@ -2,9 +2,11 @@
 [data-bs-theme="dark"] {
   color-scheme: dark;
   --bg: #0f1219;
+  --bg-deep: #0c0f16;
   --surface: #171b26;
   --surface-2: #1e2433;
   --surface-3: #262d40;
+  --surface-nav: #131722;
   --border: #2e3649;
   --border-strong: #3d4760;
   --text-1: #eef1f6;
@@ -13,29 +15,36 @@
   --accent: #f5a623;
   --accent-soft: rgba(245, 166, 35, 0.14);
   --accent-2: #7cacf8;
+  --accent-2-soft: rgba(124, 172, 248, 0.14);
   --danger: #f07178;
   --danger-soft: rgba(240, 113, 120, 0.14);
   --success: #6bcf7f;
   --success-soft: rgba(107, 207, 127, 0.14);
+  --warning: #f0b13e;
+  --warning-soft: rgba(240, 177, 62, 0.16);
   --info: #7cacf8;
   --info-soft: rgba(124, 172, 248, 0.14);
   --focus-ring: 0 0 0 3px rgba(245, 166, 35, 0.35);
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  --sidebar-w: 240px;
-  --bottom-nav-h: 56px;
-  --fab-size: 56px;
-  --radius: 10px;
-  --radius-sm: 6px;
+  --sidebar-w: 248px;
+  --bottom-nav-h: 62px;
+  --fab-size: 54px;
+  --radius: 12px;
+  --radius-sm: 8px;
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lift: 0 14px 34px rgba(0, 0, 0, 0.5);
+  --btn-accent-ink: #1a1200;
 }
 
 [data-bs-theme="light"] {
   color-scheme: light;
   --bg: #f4f6fa;
+  --bg-deep: #eef1f7;
   --surface: #ffffff;
   --surface-2: #eef1f7;
   --surface-3: #e3e8f0;
+  --surface-nav: #ffffff;
   --border: #d5dbe7;
   --border-strong: #b8c0d0;
   --text-1: #12151c;
@@ -43,7 +52,18 @@
   --text-3: #6b758c;
   --accent: #e09400;
   --accent-soft: rgba(224, 148, 0, 0.12);
+  --accent-2: #3f6fd8;
+  --accent-2-soft: rgba(63, 111, 216, 0.12);
   --danger: #d93442;
   --danger-soft: rgba(217, 52, 66, 0.1);
+  --success: #1f9d4d;
+  --success-soft: rgba(31, 157, 77, 0.12);
+  --warning: #b9770e;
+  --warning-soft: rgba(185, 119, 14, 0.14);
+  --info: #3f6fd8;
+  --info-soft: rgba(63, 111, 216, 0.12);
+  --focus-ring: 0 0 0 3px rgba(224, 148, 0, 0.3);
   --shadow: 0 8px 24px rgba(15, 18, 25, 0.08);
+  --shadow-lift: 0 14px 34px rgba(15, 18, 25, 0.16);
+  --btn-accent-ink: #ffffff;
 }
