@@ -19,6 +19,7 @@ type createReminderRequest struct {
 	Timezone    string  `json:"timezone"`
 	Priority    string  `json:"priority"`
 	ListID      *string `json:"list_id"`
+	Recurrence  string  `json:"recurrence"`
 }
 
 type updateReminderRequest struct {
@@ -28,7 +29,9 @@ type updateReminderRequest struct {
 	Timezone    *string `json:"timezone"`
 	Priority    *string `json:"priority"`
 	Status      *string `json:"status"`
+	Pinned      *bool   `json:"pinned"`
 	ListID      *string `json:"list_id"`
+	Recurrence  *string `json:"recurrence"`
 }
 
 type snoozeRequest struct {
@@ -112,6 +115,7 @@ func (s *Server) handleCreateReminder(w http.ResponseWriter, r *http.Request) {
 		DueAt:       dueAt,
 		Timezone:    body.Timezone,
 		Priority:    body.Priority,
+		Recurrence:  body.Recurrence,
 	}
 	if body.ListID != nil && *body.ListID != "" {
 		id, err := uuid.Parse(*body.ListID)
@@ -162,6 +166,8 @@ func (s *Server) handleUpdateReminder(w http.ResponseWriter, r *http.Request) {
 		Timezone:    body.Timezone,
 		Priority:    body.Priority,
 		Status:      body.Status,
+		Pinned:      body.Pinned,
+		Recurrence:  body.Recurrence,
 	}
 	if body.DueAt != nil {
 		dueAt, err := time.Parse(time.RFC3339, *body.DueAt)
@@ -294,6 +300,7 @@ func reminderPayload(r reminder.Reminder) map[string]any {
 		"timezone":    r.Timezone,
 		"status":      r.Status,
 		"priority":    r.Priority,
+		"recurrence":  r.Recurrence,
 		"pinned":      r.Pinned,
 		"created_at":  r.CreatedAt.UTC().Format(time.RFC3339),
 		"updated_at":  r.UpdatedAt.UTC().Format(time.RFC3339),

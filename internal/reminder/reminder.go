@@ -37,6 +37,7 @@ type Reminder struct {
 	// dispatched, so a reminder is never delivered twice for the same event.
 	SentDueAt     *time.Time
 	SentAdvanceAt *time.Time
+	Recurrence    string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }
@@ -48,6 +49,7 @@ type CreateInput struct {
 	Timezone    string
 	Priority    string
 	ListID      *uuid.UUID
+	Recurrence  string
 }
 
 type UpdateInput struct {
@@ -57,7 +59,9 @@ type UpdateInput struct {
 	Timezone    *string
 	Priority    *string
 	Status      *string
+	Pinned      *bool
 	ListID      *uuid.UUID
+	Recurrence  *string
 }
 
 type ListFilter struct {

@@ -33,6 +33,7 @@ type reminderDoc struct {
 	// been dispatched and must not be sent again.
 	SentDueAt     *time.Time `bson:"sent_due_at,omitempty"`
 	SentAdvanceAt *time.Time `bson:"sent_advance_at,omitempty"`
+	Recurrence    string     `bson:"recurrence,omitempty"`
 	CreatedAt     time.Time  `bson:"created_at"`
 	UpdatedAt     time.Time  `bson:"updated_at"`
 }
@@ -55,6 +56,7 @@ func reminderFromDoc(doc reminderDoc) reminder.Reminder {
 		CompletedAt:   doc.CompletedAt,
 		SentDueAt:     doc.SentDueAt,
 		SentAdvanceAt: doc.SentAdvanceAt,
+		Recurrence:    doc.Recurrence,
 		CreatedAt:     doc.CreatedAt,
 		UpdatedAt:     doc.UpdatedAt,
 	}
@@ -75,6 +77,10 @@ func (db *DB) CreateReminder(ctx context.Context, userID uuid.UUID, in reminder.
 	if !reminder.ValidPriority(priority) {
 		return reminder.Reminder{}, fmt.Errorf("%w: unknown priority %q", ErrInvalid, priority)
 	}
+	recur := strings.TrimSpace(in.Recurrence)
+	if !reminder.ValidRecurrence(recur) {
+		return reminder.Reminder{}, fmt.Errorf("%w: unknown recurrence %q", ErrInvalid, recur)
+	}
 	tz := strings.TrimSpace(in.Timezone)
 	if tz == "" {
 		tz = defaultTimezone
@@ -90,6 +96,7 @@ func (db *DB) CreateReminder(ctx context.Context, userID uuid.UUID, in reminder.
 		Timezone:    tz,
 		Status:      reminder.StatusScheduled,
 		Priority:    priority,
+		Recurrence:  recur,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -203,9 +210,26 @@ func (db *DB) UpdateReminder(ctx context.Context, userID, id uuid.UUID, in remin
 			return reminder.Reminder{}, fmt.Errorf("%w: unknown status %q", ErrInvalid, status)
 		}
 	}
+	recur := cur.Recurrence
+	if in.Recurrence != nil {
+		recur = strings.TrimSpace(*in.Recurrence)
+		if !reminder.ValidRecurrence(recur) {
+			return reminder.Reminder{}, fmt.Errorf("%w: unknown recurrence %q", ErrInvalid, recur)
+		}
+	}
+	if status == reminder.StatusDone {
+		if next, ok := reminder.NextDueAfter(dueAt, tz, recur, time.Now().UTC()); ok {
+			dueAt = next
+			status = reminder.StatusScheduled
+		}
+	}
 	listID := cur.ListID
 	if in.ListID != nil {
 		listID = in.ListID
+	}
+	pinned := cur.Pinned
+	if in.Pinned != nil {
+		pinned = *in.Pinned
 	}
 	// completed_at tracks status: stamp it on the way into done, clear it on the
 	// way back out so a reopened reminder does not keep a stale completion time.
@@ -225,6 +249,8 @@ func (db *DB) UpdateReminder(ctx context.Context, userID, id uuid.UUID, in remin
 		"timezone":     tz,
 		"priority":     priority,
 		"status":       status,
+		"pinned":       pinned,
+		"recurrence":   recur,
 		"list_id":      listID,
 		"completed_at": completedAt,
 		"updated_at":   time.Now().UTC(),
