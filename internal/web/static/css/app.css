@@ -1289,3 +1289,6 @@ button.stat-card:active { transform: translateY(0); }
   font-weight: 700;
 }
 .due-cal-cell.due-cal-selected.due-cal-today { color: #ffffff; box-shadow: inset 0 1px 0 rgba(255,255,255,.25), 0 0 0 2px var(--accent-2); }
+
+.sec-head .sec-link { display: inline-flex; align-items: center; min-height: 24px; padding: 2px 6px; margin-right: -6px; border-radius: 8px; }
+.sec-head .sec-link:hover { background: var(--accent-2-soft); }
