@@ -352,7 +352,7 @@ function toggleSidebarHidden() {
 }
 
 function initTheme() {
-  const saved = localStorage.getItem('drTheme') || 'dark';
+  const saved = localStorage.getItem('drTheme') || 'light';
   document.documentElement.setAttribute('data-bs-theme', saved);
 }
 

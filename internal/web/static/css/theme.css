@@ -1,30 +1,38 @@
+/* Day Remind — Orion theme (shadcnstudio orion-ai-agent reference, 2026-10-24).
+   Token names unchanged from the previous theme; only values moved.
+   Light is the default (Orion's warm cream signature); dark = charcoal with
+   the same coral→amber accents. */
+
 :root,
-[data-bs-theme="dark"] {
-  color-scheme: dark;
-  --bg: #0f1219;
-  --bg-deep: #0c0f16;
-  --surface: #171b26;
-  --surface-2: #1e2433;
-  --surface-3: #262d40;
-  --surface-nav: #131722;
-  --border: #2e3649;
-  --border-strong: #3d4760;
-  --text-1: #eef1f6;
-  --text-2: #a8b0c4;
-  --text-3: #6b758c;
-  --accent: #f5a623;
-  --accent-soft: rgba(245, 166, 35, 0.14);
-  --accent-2: #7cacf8;
-  --accent-2-soft: rgba(124, 172, 248, 0.14);
-  --danger: #f07178;
-  --danger-soft: rgba(240, 113, 120, 0.14);
-  --success: #6bcf7f;
-  --success-soft: rgba(107, 207, 127, 0.14);
-  --warning: #f0b13e;
-  --warning-soft: rgba(240, 177, 62, 0.16);
-  --info: #7cacf8;
-  --info-soft: rgba(124, 172, 248, 0.14);
-  --focus-ring: 0 0 0 3px rgba(245, 166, 35, 0.35);
+[data-bs-theme="light"] {
+  color-scheme: light;
+  --bg: #fdf8f1;
+  --bg-deep: #faf3e9;
+  --surface: #ffffff;
+  --surface-2: #fbf5ec;
+  --surface-3: #f5ead9;
+  --surface-nav: #faf3e9;
+  --border: #eee2d2;
+  --border-strong: #e2d2bc;
+  --text-1: #1c1917;
+  --text-2: #8a8177;
+  --text-3: #a89f93;
+  --accent: #f59e0b;
+  --accent-soft: rgba(245, 158, 11, 0.12);
+  --accent-2: #f0654f;
+  --accent-2-soft: rgba(240, 101, 79, 0.1);
+  --danger: #e04b36;
+  --danger-soft: rgba(240, 101, 79, 0.1);
+  --success: #1f9d4d;
+  --success-soft: rgba(31, 157, 77, 0.12);
+  --warning: #d97706;
+  --warning-soft: rgba(217, 119, 6, 0.12);
+  --info: #3f6fd8;
+  --info-soft: rgba(63, 111, 216, 0.1);
+  --focus-ring: 0 0 0 3px rgba(240, 101, 79, 0.28);
+  --accent-grad: linear-gradient(100deg, #f0654f 0%, #f59e0b 100%);
+  --btn-primary-ink: #ffffff;
+  --btn-accent-ink: #ffffff;
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --sidebar-w: 248px;
@@ -32,38 +40,39 @@
   --fab-size: 54px;
   --radius: 12px;
   --radius-sm: 8px;
-  --shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-  --shadow-lift: 0 14px 34px rgba(0, 0, 0, 0.5);
-  --btn-accent-ink: #1a1200;
+  --shadow: 0 8px 24px rgba(120, 90, 50, 0.1);
+  --shadow-lift: 0 14px 34px rgba(120, 90, 50, 0.16);
 }
 
-[data-bs-theme="light"] {
-  color-scheme: light;
-  --bg: #f4f6fa;
-  --bg-deep: #eef1f7;
-  --surface: #ffffff;
-  --surface-2: #eef1f7;
-  --surface-3: #e3e8f0;
-  --surface-nav: #ffffff;
-  --border: #d5dbe7;
-  --border-strong: #b8c0d0;
-  --text-1: #12151c;
-  --text-2: #4a5568;
-  --text-3: #6b758c;
-  --accent: #e09400;
-  --accent-soft: rgba(224, 148, 0, 0.12);
-  --accent-2: #3f6fd8;
-  --accent-2-soft: rgba(63, 111, 216, 0.12);
-  --danger: #d93442;
-  --danger-soft: rgba(217, 52, 66, 0.1);
-  --success: #1f9d4d;
-  --success-soft: rgba(31, 157, 77, 0.12);
-  --warning: #b9770e;
-  --warning-soft: rgba(185, 119, 14, 0.14);
-  --info: #3f6fd8;
-  --info-soft: rgba(63, 111, 216, 0.12);
-  --focus-ring: 0 0 0 3px rgba(224, 148, 0, 0.3);
-  --shadow: 0 8px 24px rgba(15, 18, 25, 0.08);
-  --shadow-lift: 0 14px 34px rgba(15, 18, 25, 0.16);
+[data-bs-theme="dark"] {
+  color-scheme: dark;
+  --bg: #131313;
+  --bg-deep: #0e0e0e;
+  --surface: #1a1a1a;
+  --surface-2: #212121;
+  --surface-3: #2a2a2a;
+  --surface-nav: #101010;
+  --border: #2a2a2a;
+  --border-strong: #3a3a3a;
+  --text-1: #fafaf9;
+  --text-2: #a8a29e;
+  --text-3: #7a736c;
+  --accent: #f5a623;
+  --accent-soft: rgba(245, 166, 35, 0.14);
+  --accent-2: #f0654f;
+  --accent-2-soft: rgba(240, 101, 79, 0.14);
+  --danger: #f0654f;
+  --danger-soft: rgba(240, 101, 79, 0.14);
+  --success: #4ade80;
+  --success-soft: rgba(74, 222, 128, 0.14);
+  --warning: #f0b13e;
+  --warning-soft: rgba(240, 177, 62, 0.16);
+  --info: #7cacf8;
+  --info-soft: rgba(124, 172, 248, 0.14);
+  --focus-ring: 0 0 0 3px rgba(240, 101, 79, 0.35);
+  --accent-grad: linear-gradient(100deg, #f0654f 0%, #f59e0b 100%);
+  --btn-primary-ink: #ffffff;
   --btn-accent-ink: #ffffff;
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-lift: 0 14px 34px rgba(0, 0, 0, 0.55);
 }
