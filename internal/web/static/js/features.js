@@ -161,7 +161,7 @@ async function renderCalendar() {
   document.getElementById('cal-add-day')?.addEventListener('click', () => {
     const day = featureState.selectedDay;
     closeAllMenus();
-    if (day) openCreateDrawer(new Date(day + 'T00:00:00'));
+    if (day) openCreatePage(new Date(day + "T00:00:00"));
   });
   bindReminderActions(document.getElementById('app'), () => renderCalendar());
 }

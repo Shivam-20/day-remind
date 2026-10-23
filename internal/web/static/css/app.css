@@ -1184,3 +1184,67 @@ button.stat-card:active { transform: translateY(0); }
   .toast { animation: none; }
   * { transition: none !important; }
 }
+
+/* — dedicated new-reminder page + insta modal (2026-10-24) — */
+.crumb-back {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--text-2); font-size: 0.85rem; text-decoration: none; margin-bottom: 12px;
+}
+.crumb-back:hover { color: var(--accent-2); }
+.crumb-back svg { width: 14px; height: 14px; }
+
+.panel-card {
+  max-width: 620px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px 24px;
+}
+.pagefoot { display: flex; align-items: center; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
+.pagefoot-note { color: var(--text-3); font-size: 0.78rem; margin-left: auto; }
+
+.sort-row { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--text-3); }
+.sort-row svg { width: 14px; height: 14px; }
+.sort-row select {
+  font: inherit; font-size: 0.8rem; padding: 6px 9px; border-radius: 9px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-1);
+}
+.filter-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 90;
+  background: light-dark(rgba(28, 25, 23, 0.35), rgba(0, 0, 0, 0.6));
+  display: grid; place-items: center; padding: 20px;
+}
+.modal-card {
+  width: 100%; max-width: 400px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 16px; padding: 18px 20px 16px;
+  box-shadow: var(--shadow-lift);
+}
+.modal-head { display: flex; align-items: center; gap: 9px; }
+.modal-head h3 { margin: 0; font-size: 1rem; font-weight: 700; }
+.modal-head .icon-btn { margin-left: auto; }
+.zap-chip {
+  width: 26px; height: 26px; border-radius: 8px; flex: none;
+  background: var(--accent-grad); color: var(--btn-primary-ink);
+  display: grid; place-items: center;
+}
+.zap-chip svg { width: 14px; height: 14px; }
+.modal-sub { color: var(--text-2); font-size: 0.82rem; margin: 2px 0 14px; }
+.when-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.when-chip {
+  font: inherit; text-align: left; padding: 9px 10px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); color: var(--text-1);
+  display: flex; flex-direction: column; gap: 1px;
+}
+.when-chip b { font-size: 0.82rem; font-weight: 600; }
+.when-chip span { color: var(--text-3); font-size: 0.72rem; }
+.when-chip.on { border-color: var(--accent-2); background: var(--accent-2-soft); box-shadow: 0 0 0 1px var(--accent-2); }
+.insta-custom { margin-top: 8px; }
+.modal-actions { display: flex; margin-top: 14px; }
+.modal-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.modal-foot a { color: var(--text-2); font-size: 0.78rem; text-decoration: none; }
+.modal-foot a:hover { color: var(--accent-2); }
+.modal-note { color: var(--text-3); font-size: 0.72rem; }

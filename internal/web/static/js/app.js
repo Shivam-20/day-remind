@@ -11,6 +11,7 @@ function allRoutes() {
   return {
     '/today': renderToday,
     '/reminders': renderReminders,
+    '/reminders/new': renderNewReminderPage,
     '/settings': renderSettings,
     '/settings/vacation': renderVacationSettings,
     '/settings/notifications': renderNotificationSettings,
@@ -108,7 +109,8 @@ function renderAuth(signup) {
 function showKeyboardShortcutsDrawer() {
   openDrawer('Keyboard shortcuts', `
     <dl class="detail-list">
-      <dt><kbd>N</kbd></dt><dd>New reminder</dd>
+      <dt><kbd>N</kbd></dt><dd>New reminder (full page)</dd>
+      <dt><kbd>I</kbd></dt><dd>Insta reminder</dd>
       <dt><kbd>⌘K</kbd> / <kbd>/</kbd></dt><dd>Search reminders</dd>
       <dt><kbd>?</kbd></dt><dd>Show keyboard shortcuts</dd>
       <dt><kbd>Esc</kbd></dt><dd>Close drawer or menu</dd>
@@ -191,6 +193,7 @@ function shellHTML(active, mainHTML, crumbLabel) {
             Search reminders…
             <kbd>⌘K</kbd>
           </button>
+          <button class="btn btn-sm btn-with-icon" id="insta-reminder-top" aria-label="Insta reminder" title="Insta reminder (I)">${actionIconSVG('zap')}<span class="btn-label">Insta</span></button>
           <button class="btn btn-primary btn-sm btn-with-icon" id="add-reminder-top">${iconHTML('plus')}<span class="btn-label">New reminder</span></button>
         </header>
         <main id="main" class="page">${mainHTML}</main>
@@ -240,14 +243,16 @@ function bindShell(active) {
     location.hash = '#/login';
     renderAuth(false);
   });
-  const _openCreate = typeof openCreateDrawerEnhanced === 'function' ? openCreateDrawerEnhanced : openCreateDrawer;
+  const _openCreate = typeof openCreateDrawerEnhanced === 'function' ? openCreateDrawerEnhanced : openCreatePage;
   document.getElementById('add-reminder-top')?.addEventListener('click', () => _openCreate());
   document.getElementById('fab-add')?.addEventListener('click', () => _openCreate());
+  document.getElementById('insta-reminder-top')?.addEventListener('click', openInstaModal);
   if (window._shellKbdHandler) document.removeEventListener('keydown', window._shellKbdHandler);
   window._shellKbdHandler = (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
-    if (document.querySelector('.drawer')) return;
+    if (document.querySelector('.drawer') || document.querySelector('.modal-backdrop')) return;
     if ((e.key === 'n' || e.key === 'N') && !e.metaKey && !e.ctrlKey) { e.preventDefault(); _openCreate(); }
+    if ((e.key === 'i' || e.key === 'I') && !e.metaKey && !e.ctrlKey) { e.preventDefault(); openInstaModal(); }
     if (e.key === '?') showKeyboardShortcutsDrawer();
     if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); focusGlobalSearch(); }
     if (e.key === '/' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); focusGlobalSearch(); }
@@ -588,7 +593,21 @@ async function renderReminders() {
   let items = state.reminders.slice();
   if (state.filter !== 'all') items = items.filter((r) => r.status === state.filter);
   if (state.listFilter) items = items.filter((r) => r.list_id === state.listFilter);
-  items.sort((a, b) => new Date(a.due_at) - new Date(b.due_at));
+
+  const sortMode = localStorage.getItem('drRemSort') || 'smart';
+  const PRIORITY_RANK = { urgent: 0, high: 1, normal: 2, low: 3 };
+  const byDue = (a, b) => new Date(a.due_at) - new Date(b.due_at);
+  const byPinned = (a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
+  const sorters = {
+    smart: (a, b) => byPinned(a, b) || byDue(a, b),
+    due: byDue,
+    newest: (a, b) => new Date(b.created_at) - new Date(a.created_at),
+    priority: (a, b) => (PRIORITY_RANK[a.priority || 'normal'] - PRIORITY_RANK[b.priority || 'normal']) || byDue(a, b),
+    title: (a, b) => (a.title || '').localeCompare(b.title || ''),
+  };
+  items.sort(sorters[sortMode] || sorters.smart);
+  const pinnedItems = sortMode === 'smart' ? items.filter((r) => r.pinned) : [];
+  const unpinned = sortMode === 'smart' ? items.filter((r) => !r.pinned) : items;
 
   const now = new Date();
   const counts = {
@@ -605,12 +624,16 @@ async function renderReminders() {
     ? (state.listFilterName || state.listFilter.slice(0, 8))
     : '';
 
-  const groups = groupReminders(items, now);
-  const groupedHTML = groups.length
+  const groups = groupReminders(unpinned, now);
+  const pinnedHTML = pinnedItems.length
+    ? `<div class="sec-head"><h2>${iconHTML('pin')} Pinned</h2><span class="sec-count">${pinnedItems.length}</span></div>
+       <div class="reminder-list">${pinnedItems.map((r) => reminderRowHTML(r)).join('')}</div>`
+    : '';
+  const groupedHTML = pinnedHTML + (groups.length
     ? groups.map((g) => `
         <div class="sec-head ${g.cls}"><h2>${escapeHTML(g.label)}</h2><span class="sec-count">${g.items.length}</span></div>
         <div class="reminder-list">${g.items.map((r) => reminderRowHTML(r)).join('')}</div>`).join('')
-    : emptyState(q ? 'No matches' : 'No reminders', q ? `Nothing matches “${escapeHTML(q)}”.` : 'Create one to get started.', '', q ? 'search' : 'inbox');
+    : (pinnedHTML ? '' : emptyState(q ? 'No matches' : 'No reminders', q ? `Nothing matches “${escapeHTML(q)}”.` : 'Create one to get started.', '', q ? 'search' : 'inbox')));
 
   const main = `
     <div class="page-header-row">
@@ -623,7 +646,17 @@ async function renderReminders() {
       <span class="list-tools-search">${actionIconSVG('search')}<input id="list-search" type="search" placeholder="Search by title…" value="${escapeHTML(state.search)}" aria-label="Search reminders"></span>
     </div>
     ${state.listFilter ? `<div class="pill-row"><span class="pill-note">${iconHTML('list')}List: ${escapeHTML(listFilterName)}<button id="clear-list-filter" aria-label="Clear list filter">${actionIconSVG('x')}</button></span></div>` : ''}
-    <div class="filter-row">${chips}</div>
+    <div class="filter-row">
+      ${chips}
+      <span class="sort-row"><label class="sort-label" for="rem-sort">${actionIconSVG('arrow-down-up')}<span class="sr-only">Sort</span></label>
+      <select id="rem-sort" aria-label="Sort reminders">
+        <option value="smart"${sortMode === 'smart' ? ' selected' : ''}>Smart (pinned → due)</option>
+        <option value="due"${sortMode === 'due' ? ' selected' : ''}>Due date</option>
+        <option value="newest"${sortMode === 'newest' ? ' selected' : ''}>Newest first</option>
+        <option value="priority"${sortMode === 'priority' ? ' selected' : ''}>Priority</option>
+        <option value="title"${sortMode === 'title' ? ' selected' : ''}>Title A–Z</option>
+      </select></span>
+    </div>
     ${groupedHTML}
   `;
   document.getElementById('app').innerHTML = shellHTML('/reminders', main);
@@ -649,6 +682,10 @@ async function renderReminders() {
       state.filter = chip.dataset.filter;
       renderReminders();
     });
+  });
+  document.getElementById('rem-sort')?.addEventListener('change', (e) => {
+    localStorage.setItem('drRemSort', e.target.value);
+    renderReminders();
   });
   document.getElementById('clear-list-filter')?.addEventListener('click', () => {
     state.listFilter = '';
@@ -1045,6 +1082,188 @@ async function openReminderDrawer(id) {
 }
 
 window.openReminderDrawer = openReminderDrawer;
+
+// ---------------------------------------------------------------- dedicated new-reminder page
+
+function openCreatePage(defaultDate) {
+  const q = defaultDate ? `?date=${encodeURIComponent(defaultDate.toISOString())}` : '';
+  location.hash = `#/reminders/new${q}`;
+  if ((location.hash.replace('#', '') || '/today').startsWith('/reminders/new')) renderApp('/reminders/new');
+}
+
+async function renderNewReminderPage(route) {
+  const q = new URLSearchParams((route.split('?')[1] || ''));
+  const dateParam = q.get('date');
+  const defaultDue = dateParam ? new Date(dateParam) : new Date();
+  if (!dateParam) defaultDue.setHours(defaultDue.getHours() + 1, 0, 0, 0);
+  else defaultDue.setHours(9, 0, 0, 0);
+
+  const lists = await fetchUserLists();
+  const handoffTitle = sessionStorage.getItem('drInstaTitle') || '';
+  sessionStorage.removeItem('drInstaTitle');
+
+  const main = `
+    <a class="crumb-back" href="#/reminders">${actionIconSVG('arrow-left')}Back to reminders</a>
+    <div class="panel-card">
+      <h1 class="page-title" style="margin-bottom:2px">New reminder</h1>
+      <p class="page-sub">Everything about one reminder, in one place.</p>
+      <form id="new-reminder-form">
+        ${reminderFormFields({ due: defaultDue })}
+        <input type="hidden" id="r-title-handoff" value="${escapeHTML(handoffTitle)}">
+        ${listPickerHTML(lists, '')}
+        <div class="pagefoot">
+          <button type="submit" class="btn btn-primary btn-with-icon" id="save-reminder-page">${actionIconSVG('check')}<span class="btn-label">Save reminder</span></button>
+          <button type="button" class="btn" id="cancel-new-reminder">Cancel</button>
+          <span class="pagefoot-note">Repeats follow your timezone</span>
+        </div>
+      </form>
+    </div>`;
+  document.getElementById('app').innerHTML = shellHTML('/reminders', main);
+  bindShell('/reminders');
+
+  const form = document.getElementById('new-reminder-form');
+  const titleInput = form.querySelector('#r-title');
+  if (handoffTitle && !titleInput.value) {
+    titleInput.value = handoffTitle;
+    form.querySelector('#r-desc')?.focus();
+  } else {
+    titleInput.focus();
+  }
+  bindReminderForm(form);
+  form.querySelector('#cancel-new-reminder').addEventListener('click', () => { location.hash = '#/reminders'; });
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const title = titleInput.value.trim();
+    const dueLocal = readDueLocal(form);
+    if (!title || !dueLocal) {
+      showToast('Title and due date required', 'error');
+      return;
+    }
+    const body = {
+      title,
+      description: form.querySelector('#r-desc').value,
+      due_at: new Date(dueLocal).toISOString(),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      priority: form.querySelector('#r-priority').value,
+      recurrence: readRepeat(form),
+    };
+    const listId = form.querySelector('#r-list')?.value;
+    if (listId) body.list_id = listId;
+    const saveBtn = form.querySelector('#save-reminder-page');
+    saveBtn.disabled = true;
+    try {
+      await API.post('/api/reminders', body);
+      showToast('Reminder created');
+      location.hash = '#/reminders';
+    } catch (err) {
+      showToast(err.message, 'error');
+      saveBtn.disabled = false;
+    }
+  });
+}
+
+// ---------------------------------------------------------------- insta reminder (quick add)
+
+function closeInstaModal() {
+  document.querySelector('.modal-backdrop')?.remove();
+}
+
+function openInstaModal() {
+  closeInstaModal();
+  const now = new Date();
+  const in1h = new Date(now.getTime() + 3600 * 1000);
+  const tonight = new Date(now); tonight.setHours(21, 0, 0, 0);
+  if (tonight <= now) tonight.setDate(tonight.getDate() + 1);
+  const tomorrow9 = new Date(now); tomorrow9.setDate(tomorrow9.getDate() + 1); tomorrow9.setHours(9, 0, 0, 0);
+  const hhmm = (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const presets = [
+    { key: '1h', label: 'In 1 hour', sub: hhmm(in1h) + ' today', at: in1h },
+    { key: 'tonight', label: 'Tonight', sub: '21:00 today', at: tonight },
+    { key: 'tomorrow', label: 'Tomorrow AM', sub: '9:00 tomorrow', at: tomorrow9 },
+    { key: 'custom', label: 'Pick date…', sub: 'custom', at: null },
+  ];
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.innerHTML = `
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Insta reminder">
+      <div class="modal-head">
+        <span class="zap-chip">${actionIconSVG('zap')}</span>
+        <h3>Insta reminder</h3>
+        <button type="button" class="icon-btn" id="insta-close" aria-label="Close">${actionIconSVG('x')}</button>
+      </div>
+      <p class="modal-sub">Just the essentials — pick a when and go.</p>
+      <div class="field">
+        <label for="insta-title"><span class="form-label-icon">${actionIconSVG('type')}What?</span></label>
+        <input id="insta-title" placeholder="Call the bank…" autocomplete="off">
+      </div>
+      <div class="field">
+        <label><span class="form-label-icon">${actionIconSVG('clock')}When?</span></label>
+        <div class="when-grid" role="group" aria-label="Quick times">
+          ${presets.map((p, i) => `<button type="button" class="when-chip${i === 0 ? ' on' : ''}" data-at="${p.at ? p.at.toISOString() : ''}">
+            <b>${p.label}</b><span>${p.sub}</span></button>`).join('')}
+        </div>
+        <input type="datetime-local" id="insta-custom" class="insta-custom" hidden aria-label="Custom date and time">
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-primary btn-with-icon" id="insta-save" style="flex:1">${actionIconSVG('bell-ring')}<span class="btn-label">Remind me</span></button>
+      </div>
+      <div class="modal-foot">
+        <a href="#/reminders/new" id="insta-full">Need more details? Full form →</a>
+        <span class="modal-note">defaults: no repeat · normal</span>
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+
+  let chosen = presets[0].at ? presets[0].at.toISOString() : '';
+  backdrop.querySelectorAll('.when-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      backdrop.querySelectorAll('.when-chip').forEach((c) => c.classList.remove('on'));
+      chip.classList.add('on');
+      chosen = chip.dataset.at || '';
+      backdrop.querySelector('#insta-custom').hidden = chip.dataset.at !== '';
+    });
+  });
+  const customInput = backdrop.querySelector('#insta-custom');
+  customInput.addEventListener('change', () => {
+    if (customInput.value) chosen = new Date(customInput.value).toISOString();
+  });
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeInstaModal(); });
+  backdrop.querySelector('#insta-close').addEventListener('click', closeInstaModal);
+  backdrop.querySelector('#insta-full').addEventListener('click', () => {
+    const t = backdrop.querySelector('#insta-title').value.trim();
+    if (t) sessionStorage.setItem('drInstaTitle', t);
+    closeInstaModal();
+    location.hash = '#/reminders/new';
+    renderApp('/reminders/new');
+  });
+  const titleInput = backdrop.querySelector('#insta-title');
+  titleInput.focus();
+  titleInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); backdrop.querySelector('#insta-save').click(); } });
+
+  backdrop.querySelector('#insta-save').addEventListener('click', async () => {
+    const title = titleInput.value.trim();
+    if (!title) { showToast('Give it a name', 'error'); titleInput.focus(); return; }
+    if (!chosen) { showToast('Pick a when', 'error'); return; }
+    const btn = backdrop.querySelector('#insta-save');
+    btn.disabled = true;
+    try {
+      await API.post('/api/reminders', {
+        title,
+        due_at: chosen,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        priority: 'normal',
+      });
+      closeInstaModal();
+      showToast('Reminder created');
+      const route = location.hash.replace('#', '') || '/today';
+      renderApp(route);
+    } catch (err) {
+      showToast(err.message, 'error');
+      btn.disabled = false;
+    }
+  });
+}
+window.openInstaModal = openInstaModal;
 
 // ---------------------------------------------------------------- admin panel
 
