@@ -235,7 +235,7 @@ function reminderRowHTML(item, opts = {}) {
   const menu = opts.menu === false ? '' : rowOverflowMenuHTML(item);
   const metaParts = [];
   metaParts.push(`<span class="row-when">${escapeHTML(formatDue(item.due_at, item.timezone))}</span>`);
-  if (item.recurrence) metaParts.push(`<span>↻ ${escapeHTML(item.recurrence)}</span>`);
+  if (item.recurrence) metaParts.push(`<span class="tag">${escapeHTML(item.recurrence)}</span>`);
   if (done && item.completed_at) metaParts.push(`<span>done ${escapeHTML(new Date(item.completed_at).toLocaleDateString())}</span>`);
   return `
     <article class="${cls}" data-id="${escapeHTML(item.id)}">

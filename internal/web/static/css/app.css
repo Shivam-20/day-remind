@@ -288,7 +288,11 @@ kbd {
   border-radius: var(--radius);
   transition: border-color 0.12s ease, background 0.12s ease;
 }
-.row-card:hover, .row-card:focus-within { border-color: var(--border-strong); background: var(--surface-2); }
+.row-card:hover, .row-card:focus-within {
+  border-color: light-dark(rgba(240, 101, 79, 0.4), rgba(240, 101, 79, 0.45));
+  background: var(--surface);
+  box-shadow: 0 2px 12px rgba(240, 101, 79, 0.08);
+}
 .row-card.overdue { border-left: 3px solid var(--danger); }
 .row-card.is-paused { opacity: 0.75; }
 .row-card.is-done { opacity: 0.55; }
@@ -311,7 +315,8 @@ kbd {
 .row-title .btn-icon svg { width: 13px; height: 13px; color: var(--accent); }
 .row-card.is-done .row-title { text-decoration: line-through; color: var(--text-2); }
 .row-meta { font-size: 12.5px; color: var(--text-3); margin-top: 2px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.row-meta .row-when { color: var(--text-2); font-family: var(--mono); font-size: 12px; }
+.row-meta .row-when { color: var(--text-2); font-size: 12.5px; }
+.row-meta .tag { font-size: 10px; }
 .row-meta .row-late { color: var(--danger); font-weight: 600; }
 .row-actions { display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s ease; }
 .row-card:hover .row-actions, .row-card:focus-within .row-actions { opacity: 1; }
@@ -1248,3 +1253,5 @@ button.stat-card:active { transform: translateY(0); }
 .modal-foot a { color: var(--text-2); font-size: 0.78rem; text-decoration: none; }
 .modal-foot a:hover { color: var(--accent-2); }
 .modal-note { color: var(--text-3); font-size: 0.72rem; }
+
+.sec-head h2 svg { width: 13px; height: 13px; color: var(--accent-2); }
