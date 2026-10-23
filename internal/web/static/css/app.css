@@ -50,8 +50,7 @@ svg { vertical-align: middle; }
 }
 .brand-logo {
   width: 30px; height: 30px; border-radius: 9px; flex: none;
-  background: var(--accent); color: var(--btn-accent-ink);
-  display: grid; place-items: center; font-weight: 800; font-size: 15px;
+  display: block;
 }
 .brand-name { font-weight: 700; font-size: 15.5px; }
 .nav { flex: 1; padding: 0 10px; overflow-y: auto; }

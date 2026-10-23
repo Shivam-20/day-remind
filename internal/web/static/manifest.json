@@ -4,7 +4,20 @@
   "description": "Reminders that reach you your way",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0f1219",
-  "theme_color": "#f5a623",
-  "icons": []
+  "background_color": "#fdf8f1",
+  "theme_color": "#fdf8f1",
+  "icons": [
+    {
+      "src": "static/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "static/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
 }

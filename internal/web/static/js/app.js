@@ -62,7 +62,7 @@ function renderAuth(signup) {
     <div class="auth-wrap">
       <div class="auth-card card">
         <div class="auth-hero">
-          <div class="brand"><span class="brand-logo" aria-hidden="true">D</span><span class="brand-name">Day Remind</span></div>
+          <div class="brand"><img class="brand-logo" src="static/icons/logo.svg" alt="" aria-hidden="true"><span class="brand-name">Day Remind</span></div>
           <p>Never miss what matters.</p>
         </div>
         <form id="auth-form">
@@ -167,7 +167,7 @@ function shellHTML(active, mainHTML, crumbLabel) {
   return `
     <div class="layout${sidebarHidden ? ' sidebar-hidden' : ''}">
       <aside class="sidebar" aria-label="Main navigation">
-        <div class="brand"><span class="brand-logo" aria-hidden="true">D</span><span class="brand-name">Day Remind</span></div>
+        <div class="brand"><img class="brand-logo" src="static/icons/logo.svg" alt="" aria-hidden="true"><span class="brand-name">Day Remind</span></div>
         <nav class="nav">
           ${shellNavHTML(active)}
         </nav>
