@@ -177,6 +177,10 @@ function actionIconSVG(name) {
     download: `<svg ${s}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><path d="M12 15V3"/></svg>`,
     copy: `<svg ${s}><rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`,
     clipboard: `<svg ${s}><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>`,
+    zap: `<svg ${s}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
+    'bell-ring': `<svg ${s}><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="M4 2C2.8 3.7 2 5.7 2 8"/><path d="M22 8c0-2.3-.8-4.3-2-6"/></svg>`,
+    'arrow-left': `<svg ${s}><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>`,
+    'arrow-down-up': `<svg ${s}><path d="m3 16 4 4 4-4M7 20V4M21 8l-4-4-4 4M17 4v16"/></svg>`,
   };
   return icons[name] || icons.info;
 }
@@ -417,25 +421,31 @@ function dueFieldsHTML(fromDate) {
   return `
     <fieldset class="field due-fields">
       <legend><span class="form-label-icon">${actionIconSVG('calendar')}When</span></legend>
-      ${dueCalendarHTML(parts.date, fromDate)}
-      <div class="due-chips" role="group" aria-label="Quick dates">
-        <button type="button" class="chip" data-due-date="0">Today</button>
-        <button type="button" class="chip" data-due-date="1">Tomorrow</button>
-        <button type="button" class="chip" data-due-date="7">In a week</button>
-      </div>
-      <input id="r-due-date" type="date" value="${parts.date}" required>
-      <div class="due-time-block">
-        <label for="r-due-time">Time</label>
-        <div class="due-time-row">
-          <button type="button" class="btn btn-sm due-step" data-due-time-shift="-15" aria-label="15 minutes earlier">−15</button>
-          <input id="r-due-time" type="time" value="${parts.time}" required step="60">
-          <button type="button" class="btn btn-sm due-step" data-due-time-shift="15" aria-label="15 minutes later">+15</button>
+      <div class="due-layout">
+        <div class="due-cal-col">
+          ${dueCalendarHTML(parts.date, fromDate)}
         </div>
-        <div class="due-chips" role="group" aria-label="Quick times">
-          <button type="button" class="chip" data-due-time="09:00">09:00</button>
-          <button type="button" class="chip" data-due-time="12:00">12:00</button>
-          <button type="button" class="chip" data-due-time="18:00">18:00</button>
-          <button type="button" class="chip" data-due-time="21:00">21:00</button>
+        <div class="due-side-col">
+          <div class="due-chips" role="group" aria-label="Quick dates">
+            <button type="button" class="chip" data-due-date="0">Today</button>
+            <button type="button" class="chip" data-due-date="1">Tomorrow</button>
+            <button type="button" class="chip" data-due-date="7">In a week</button>
+          </div>
+          <input id="r-due-date" type="date" value="${parts.date}" required>
+          <div class="due-time-block">
+            <label for="r-due-time">Time</label>
+            <div class="due-time-row">
+              <button type="button" class="btn btn-sm due-step" data-due-time-shift="-15" aria-label="15 minutes earlier">−15</button>
+              <input id="r-due-time" type="time" value="${parts.time}" required step="60">
+              <button type="button" class="btn btn-sm due-step" data-due-time-shift="15" aria-label="15 minutes later">+15</button>
+            </div>
+            <div class="due-chips" role="group" aria-label="Quick times">
+              <button type="button" class="chip" data-due-time="09:00">09:00</button>
+              <button type="button" class="chip" data-due-time="12:00">12:00</button>
+              <button type="button" class="chip" data-due-time="18:00">18:00</button>
+              <button type="button" class="chip" data-due-time="21:00">21:00</button>
+            </div>
+          </div>
         </div>
       </div>
     </fieldset>
