@@ -196,3 +196,9 @@ func (db *DB) ResumeList(ctx context.Context, userID, id uuid.UUID) (List, error
 	}
 	return db.GetListByID(ctx, userID, id)
 }
+
+// CountRemindersInList reports how many reminders reference the list, so the
+// UI can warn before deleting one that is still in use.
+func (db *DB) CountRemindersInList(ctx context.Context, userID, listID uuid.UUID) (int64, error) {
+	return db.collection("reminders").CountDocuments(ctx, bson.M{"user_id": userID, "list_id": listID})
+}

@@ -2,110 +2,174 @@ package notify
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
+	"mime"
 	"net"
 	"net/smtp"
 	"strings"
 	"time"
 )
 
-// SMTPTLSMode values: "starttls" (default), "ssl" (implicit TLS, usually port 465), "none".
-const (
-	SMTPTLSStartTLS = "starttls"
-	SMTPTLSSSL      = "ssl"
-	SMTPTLSNone     = "none"
-)
-
-// NormalizeSMTPTLSMode validates an admin-supplied TLS mode, defaulting to starttls.
-func NormalizeSMTPTLSMode(mode string) string {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case SMTPTLSSSL, "tls", "implicit":
-		return SMTPTLSSSL
-	case SMTPTLSNone, "off", "plain":
-		return SMTPTLSNone
-	default:
-		return SMTPTLSStartTLS
-	}
+// SMTPSender delivers notifications over SMTP.
+type SMTPSender struct {
+	Host     string
+	Port     int
+	Username string
+	Password string
+	From     string
+	// Mode is "starttls", "implicit" (SMTPS) or "none" for a local catcher.
+	Mode string
+	// Timeout bounds the whole conversation with the server.
+	Timeout time.Duration
 }
 
-// deliverSMTP sends one HTML email over SMTP. Credentials arrive from the
-// delivery settings store or env — never from literals in source.
-func deliverSMTP(ctx context.Context, host string, port int, username, password, tlsMode, from, to, subject, htmlBody string) error {
-	addr := fmt.Sprintf("%s:%d", host, port)
-	d := net.Dialer{Timeout: 15 * time.Second}
-	conn, err := d.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return fmt.Errorf("smtp: dial %s: %w", addr, err)
-	}
-	mode := NormalizeSMTPTLSMode(tlsMode)
-	// Port 465 without an explicit mode is traditionally implicit TLS.
-	if strings.TrimSpace(tlsMode) == "" && port == 465 {
-		mode = SMTPTLSSSL
-	}
-	if mode == SMTPTLSSSL {
-		conn = tls.Client(conn, &tls.Config{ServerName: host})
-	}
-	client, err := smtp.NewClient(conn, host)
-	if err != nil {
-		_ = conn.Close()
-		return fmt.Errorf("smtp: %w", err)
-	}
-	defer client.Close()
+func (s *SMTPSender) Name() string { return ChannelEmail }
 
-	if mode == SMTPTLSStartTLS {
-		if ok, _ := client.Extension("StartTLS"); ok {
-			if err := client.StartTLS(&tls.Config{ServerName: host}); err != nil {
-				return fmt.Errorf("smtp: starttls: %w", err)
-			}
-		}
+func (s *SMTPSender) timeout() time.Duration {
+	if s.Timeout <= 0 {
+		return 20 * time.Second
 	}
-	if username != "" {
-		if ok, _ := client.Extension("AUTH"); ok {
-			auth := smtp.PlainAuth("", username, password, host)
-			if err := client.Auth(auth); err != nil {
-				return fmt.Errorf("smtp: auth: %w", err)
-			}
-		}
+	return s.Timeout
+}
+
+func (s *SMTPSender) Send(ctx context.Context, dest string, m Message, r Rendered) error {
+	if dest == "" {
+		return fmt.Errorf("no email address")
 	}
-	if err := client.Mail(from); err != nil {
-		return fmt.Errorf("smtp: mail from: %w", err)
+	// A header injected through a display name or subject could forge extra
+	// headers, so refuse anything carrying a line break.
+	if strings.ContainsAny(dest, "\r\n") {
+		return fmt.Errorf("invalid email address")
 	}
-	if err := client.Rcpt(to); err != nil {
-		return fmt.Errorf("smtp: rcpt: %w", err)
+
+	addr := net.JoinHostPort(s.Host, fmt.Sprint(s.Port))
+	dialer := &net.Dialer{Timeout: s.timeout()}
+
+	var conn net.Conn
+	var err error
+	if s.Mode == "implicit" {
+		conn, err = tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{ServerName: s.Host})
+	} else {
+		conn, err = dialer.DialContext(ctx, "tcp", addr)
 	}
-	w, err := client.Data()
 	if err != nil {
-		return fmt.Errorf("smtp: data: %w", err)
+		return fmt.Errorf("dial %s: %w", addr, err)
 	}
-	if _, err := w.Write([]byte(buildSMTPMessage(from, to, subject, htmlBody))); err != nil {
-		_ = w.Close()
-		return fmt.Errorf("smtp: write body: %w", err)
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(s.timeout()))
+
+	c, err := smtp.NewClient(conn, s.Host)
+	if err != nil {
+		return fmt.Errorf("smtp handshake: %w", err)
+	}
+	defer c.Close()
+
+	if s.Mode == "starttls" {
+		if ok, _ := c.Extension("STARTTLS"); !ok {
+			return fmt.Errorf("server does not advertise STARTTLS (set SMTP_TLS=none for a local catcher)")
+		}
+		if err := c.StartTLS(&tls.Config{ServerName: s.Host}); err != nil {
+			return fmt.Errorf("starttls: %w", err)
+		}
+	}
+
+	if s.Username != "" {
+		// PlainAuth refuses to run unencrypted, which is the behaviour we want
+		// everywhere except an explicitly plaintext local catcher.
+		auth := smtp.PlainAuth("", s.Username, s.Password, s.Host)
+		if err := c.Auth(auth); err != nil {
+			return fmt.Errorf("smtp auth: %w", err)
+		}
+	}
+
+	if err := c.Mail(s.From); err != nil {
+		return fmt.Errorf("mail from: %w", err)
+	}
+	if err := c.Rcpt(dest); err != nil {
+		return fmt.Errorf("rcpt to: %w", err)
+	}
+	w, err := c.Data()
+	if err != nil {
+		return fmt.Errorf("data: %w", err)
+	}
+	if _, err := w.Write(s.buildMessage(dest, r)); err != nil {
+		return fmt.Errorf("write body: %w", err)
 	}
 	if err := w.Close(); err != nil {
-		return fmt.Errorf("smtp: close body: %w", err)
+		return fmt.Errorf("close body: %w", err)
 	}
-	return client.Quit()
+	return c.Quit()
 }
 
-func buildSMTPMessage(from, to, subject, htmlBody string) string {
+// sanitizeHeader removes anything that could terminate a header line. This is
+// not optional: mime.QEncoding.Encode passes pure-ASCII text through unchanged,
+// so a title containing CRLF would otherwise inject arbitrary headers.
+func sanitizeHeader(v string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\r' || r == '\n' {
+			return ' '
+		}
+		return r
+	}, v)
+}
+
+// buildMessage assembles a multipart/alternative message: a plain-text part for
+// clients that will not render HTML, and the styled HTML part. The text part
+// comes first, as RFC 2046 asks for least-rich-first ordering.
+//
+// Note there is no dot-stuffing here: the writer returned by smtp.Client.Data
+// is a textproto.DotWriter, which already escapes leading dots and normalises
+// line endings. Doing it here as well would double-escape.
+func (s *SMTPSender) buildMessage(dest string, r Rendered) []byte {
+	boundary := newBoundary()
+
 	var b strings.Builder
-	b.WriteString("From: " + sanitizeHeaderLine(from) + "\r\n")
-	b.WriteString("To: " + sanitizeHeaderLine(to) + "\r\n")
-	b.WriteString("Subject: " + sanitizeHeaderLine(subject) + "\r\n")
+	b.WriteString("From: " + sanitizeHeader(s.From) + "\r\n")
+	b.WriteString("To: " + sanitizeHeader(dest) + "\r\n")
+	b.WriteString("Subject: " + mime.QEncoding.Encode("utf-8", sanitizeHeader(r.Subject)) + "\r\n")
+	b.WriteString("Date: " + time.Now().UTC().Format(time.RFC1123Z) + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
-	b.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
-	b.WriteString("\r\n")
-	b.WriteString(htmlBody)
-	b.WriteString("\r\n")
-	return b.String()
+	b.WriteString("Auto-Submitted: auto-generated\r\n")
+
+	html := strings.TrimSpace(r.HTML)
+	if html == "" {
+		// No HTML part to offer, so send a simple text message.
+		b.WriteString("Content-Type: text/plain; charset=utf-8\r\n\r\n")
+		writeBody(&b, r.Text)
+		return []byte(b.String())
+	}
+
+	b.WriteString("Content-Type: multipart/alternative; boundary=\"" + boundary + "\"\r\n\r\n")
+	b.WriteString("This is a message in MIME format.\r\n")
+
+	b.WriteString("\r\n--" + boundary + "\r\n")
+	b.WriteString("Content-Type: text/plain; charset=utf-8\r\n\r\n")
+	writeBody(&b, r.Text)
+
+	b.WriteString("\r\n--" + boundary + "\r\n")
+	b.WriteString("Content-Type: text/html; charset=utf-8\r\n\r\n")
+	writeBody(&b, html)
+
+	b.WriteString("\r\n--" + boundary + "--\r\n")
+	return []byte(b.String())
 }
 
-// sanitizeHeaderLine keeps a header value to a single CR/LF-free line so
-// untrusted input can never inject additional headers.
-func sanitizeHeaderLine(s string) string {
-	s = strings.TrimSpace(s)
-	s = strings.ReplaceAll(s, "\r", "")
-	s = strings.ReplaceAll(s, "\n", " ")
-	return s
+func writeBody(b *strings.Builder, body string) {
+	for _, line := range strings.Split(body, "\n") {
+		b.WriteString(strings.TrimRight(line, "\r") + "\r\n")
+	}
+}
+
+// newBoundary returns a delimiter that cannot occur in the parts it separates.
+func newBoundary() string {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		// Only reached if the system entropy source fails; a fixed value still
+		// produces a well-formed message.
+		return "dayremind-boundary-fallback"
+	}
+	return "dayremind-" + hex.EncodeToString(buf)
 }

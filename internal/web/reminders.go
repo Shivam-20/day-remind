@@ -1,7 +1,7 @@
 package web
 
 import (
-	"fmt"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -9,65 +9,81 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/shivam-20/day-remind/internal/reminder"
-	"github.com/shivam-20/day-remind/internal/scheduler"
 	"github.com/shivam-20/day-remind/internal/storage"
 )
 
-type offsetInput struct {
-	OffsetMinutes   int    `json:"offset_minutes"`
-	ChannelOverride string `json:"channel_override"`
+type createReminderRequest struct {
+	Title       string  `json:"title"`
+	Description string  `json:"description"`
+	DueAt       string  `json:"due_at"`
+	Timezone    string  `json:"timezone"`
+	Priority    string  `json:"priority"`
+	ListID      *string `json:"list_id"`
+	Recurrence  string  `json:"recurrence"`
 }
 
-type createReminderRequest struct {
-	Title            string          `json:"title"`
-	Description      string          `json:"description"`
-	DueAt            string          `json:"due_at"`
-	Timezone         string          `json:"timezone"`
-	Priority         string          `json:"priority"`
-	ListID           *string         `json:"list_id"`
-	MailWordingID    *string         `json:"mail_wording_id"`
-	TagIDs           []string        `json:"tag_ids"`
-	RecurrenceRule   string          `json:"recurrence_rule"`
-	ChannelOverrides map[string]bool `json:"channel_overrides"`
-	Offsets          []offsetInput   `json:"offsets"`
+type updateReminderRequest struct {
+	Title       *string `json:"title"`
+	Description *string `json:"description"`
+	DueAt       *string `json:"due_at"`
+	Timezone    *string `json:"timezone"`
+	Priority    *string `json:"priority"`
+	Status      *string `json:"status"`
+	Pinned      *bool   `json:"pinned"`
+	ListID      *string `json:"list_id"`
+	Recurrence  *string `json:"recurrence"`
 }
 
 type snoozeRequest struct {
-	Until  string `json:"until"`
-	Preset string `json:"preset"`
+	Until string `json:"until"`
+}
+
+// writeStorageError maps a storage-layer error onto the right status code, so
+// a validation failure is not reported as a server fault and an internal
+// database error is not echoed back to the caller.
+func writeStorageError(w http.ResponseWriter, err error, fallback string) {
+	switch {
+	case errors.Is(err, storage.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not found")
+	case errors.Is(err, storage.ErrConflict):
+		writeError(w, http.StatusConflict, "conflict")
+	case errors.Is(err, storage.ErrInvalid):
+		writeError(w, http.StatusBadRequest, err.Error())
+	default:
+		writeError(w, http.StatusInternalServerError, fallback)
+	}
 }
 
 func (s *Server) handleListReminders(w http.ResponseWriter, r *http.Request) {
 	userID := userIDFromContext(r.Context())
-	f := reminder.ListFilter{
-		UserID:   userID,
-		Status:   r.URL.Query().Get("status"),
-		Query:    r.URL.Query().Get("q"),
-		Priority: r.URL.Query().Get("priority"),
+	q := r.URL.Query()
+	status := strings.TrimSpace(q.Get("status"))
+	if status != "" && !reminder.ValidStatus(status) {
+		writeError(w, http.StatusBadRequest, "unknown status filter")
+		return
 	}
-	if raw := r.URL.Query().Get("from"); raw != "" {
+	f := reminder.ListFilter{UserID: userID, Status: status, Query: q.Get("q")}
+	// An unparseable bound used to be dropped silently, handing back an
+	// unfiltered list that looked like a successful narrow search.
+	if raw := q.Get("from"); raw != "" {
 		t, err := time.Parse(time.RFC3339, raw)
-		if err == nil {
-			f.From = &t
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "from must be RFC3339")
+			return
 		}
+		f.From = &t
 	}
-	if raw := r.URL.Query().Get("to"); raw != "" {
+	if raw := q.Get("to"); raw != "" {
 		t, err := time.Parse(time.RFC3339, raw)
-		if err == nil {
-			f.To = &t
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "to must be RFC3339")
+			return
 		}
+		f.To = &t
 	}
-	if raw := r.URL.Query().Get("list_id"); raw != "" {
-		id, err := uuid.Parse(raw)
-		if err == nil {
-			f.ListID = &id
-		}
-	}
-	if raw := r.URL.Query().Get("tag"); raw != "" {
-		id, err := uuid.Parse(raw)
-		if err == nil {
-			f.TagID = &id
-		}
+	if f.From != nil && f.To != nil && f.To.Before(*f.From) {
+		writeError(w, http.StatusBadRequest, "to must not be before from")
+		return
 	}
 	items, err := s.db.ListReminders(r.Context(), f)
 	if err != nil {
@@ -93,20 +109,13 @@ func (s *Server) handleCreateReminder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "due_at must be RFC3339")
 		return
 	}
-	tagIDs, err := parseTagIDs(body.TagIDs)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid tag_ids")
-		return
-	}
 	in := reminder.CreateInput{
-		Title:            body.Title,
-		Description:      body.Description,
-		DueAt:            dueAt,
-		Timezone:         body.Timezone,
-		Priority:         body.Priority,
-		TagIDs:           tagIDs,
-		RecurrenceRule:   body.RecurrenceRule,
-		ChannelOverrides: body.ChannelOverrides,
+		Title:       body.Title,
+		Description: body.Description,
+		DueAt:       dueAt,
+		Timezone:    body.Timezone,
+		Priority:    body.Priority,
+		Recurrence:  body.Recurrence,
 	}
 	if body.ListID != nil && *body.ListID != "" {
 		id, err := uuid.Parse(*body.ListID)
@@ -116,22 +125,11 @@ func (s *Server) handleCreateReminder(w http.ResponseWriter, r *http.Request) {
 		}
 		in.ListID = &id
 	}
-	wordingID, err := s.ownedMailWordingID(r, userID, body.MailWordingID)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	in.MailWordingID = wordingID
 	item, err := s.db.CreateReminder(r.Context(), userID, in)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeStorageError(w, err, "could not create reminder")
 		return
 	}
-	if err := s.applyReminderOffsets(r, userID, item.ID, body.Offsets); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	item, _ = s.db.GetReminder(r.Context(), userID, item.ID)
 	writeJSON(w, http.StatusCreated, reminderPayload(item))
 }
 
@@ -143,12 +141,8 @@ func (s *Server) handleGetReminder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item, err := s.db.GetReminder(r.Context(), userID, id)
-	if err == storage.ErrNotFound {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load reminder")
+		writeStorageError(w, err, "could not load reminder")
 		return
 	}
 	writeJSON(w, http.StatusOK, reminderPayload(item))
@@ -161,67 +155,41 @@ func (s *Server) handleUpdateReminder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	var body createReminderRequest
+	var body updateReminderRequest
 	if err := decodeJSON(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
 	in := reminder.UpdateInput{
-		Title:       &body.Title,
-		Description: &body.Description,
-		Priority:    &body.Priority,
-		Timezone:    &body.Timezone,
+		Title:       body.Title,
+		Description: body.Description,
+		Timezone:    body.Timezone,
+		Priority:    body.Priority,
+		Status:      body.Status,
+		Pinned:      body.Pinned,
+		Recurrence:  body.Recurrence,
 	}
-	if body.DueAt != "" {
-		dueAt, err := time.Parse(time.RFC3339, body.DueAt)
+	if body.DueAt != nil {
+		dueAt, err := time.Parse(time.RFC3339, *body.DueAt)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "due_at must be RFC3339")
 			return
 		}
 		in.DueAt = &dueAt
 	}
-	if body.TagIDs != nil {
-		tagIDs, err := parseTagIDs(body.TagIDs)
+	if body.ListID != nil && *body.ListID != "" {
+		listID, err := uuid.Parse(*body.ListID)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid tag_ids")
+			writeError(w, http.StatusBadRequest, "invalid list_id")
 			return
 		}
-		in.TagIDs = &tagIDs
-	}
-	if body.RecurrenceRule != "" {
-		in.RecurrenceRule = &body.RecurrenceRule
-	}
-	if body.ChannelOverrides != nil {
-		in.ChannelOverrides = &body.ChannelOverrides
-	}
-	if body.MailWordingID != nil {
-		if strings.TrimSpace(*body.MailWordingID) == "" {
-			in.ClearMailWording = true
-		} else {
-			wordingID, err := s.ownedMailWordingID(r, userID, body.MailWordingID)
-			if err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			in.MailWordingID = wordingID
-		}
+		in.ListID = &listID
 	}
 	item, err := s.db.UpdateReminder(r.Context(), userID, id, in)
-	if err == storage.ErrNotFound {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeStorageError(w, err, "could not update reminder")
 		return
 	}
-	if body.Offsets != nil {
-		if err := s.replaceReminderOffsets(r, userID, id, body.Offsets); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
-	item, _ = s.db.GetReminder(r.Context(), userID, id)
 	writeJSON(w, http.StatusOK, reminderPayload(item))
 }
 
@@ -232,11 +200,8 @@ func (s *Server) handleDeleteReminder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := s.db.DeleteReminder(r.Context(), userID, id); err == storage.ErrNotFound {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not delete")
+	if err := s.db.DeleteReminder(r.Context(), userID, id); err != nil {
+		writeStorageError(w, err, "could not delete reminder")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
@@ -251,17 +216,10 @@ func (s *Server) handleDoneReminder(w http.ResponseWriter, r *http.Request) {
 	}
 	status := reminder.StatusDone
 	item, err := s.db.UpdateReminder(r.Context(), userID, id, reminder.UpdateInput{Status: &status})
-	if err == storage.ErrNotFound {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not update")
+		writeStorageError(w, err, "could not update reminder")
 		return
 	}
-	s.hooks.EmitDone(r.Context(), item)
-	scheduler.ScheduleNextRecurrenceIfNeeded(r.Context(), s.db, userID, id)
-	item, _ = s.db.GetReminder(r.Context(), userID, id)
 	writeJSON(w, http.StatusOK, reminderPayload(item))
 }
 
@@ -286,12 +244,8 @@ func (s *Server) handlePauseReminder(w http.ResponseWriter, r *http.Request) {
 		resumeAt = &t
 	}
 	item, err := s.db.PauseReminder(r.Context(), userID, id, resumeAt)
-	if err == storage.ErrNotFound {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not pause")
+		writeStorageError(w, err, "could not pause reminder")
 		return
 	}
 	writeJSON(w, http.StatusOK, reminderPayload(item))
@@ -305,12 +259,8 @@ func (s *Server) handleResumeReminder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item, err := s.db.ResumeReminder(r.Context(), userID, id)
-	if err == storage.ErrNotFound {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not resume")
+		writeStorageError(w, err, "could not resume reminder")
 		return
 	}
 	writeJSON(w, http.StatusOK, reminderPayload(item))
@@ -328,135 +278,35 @@ func (s *Server) handleSnoozeReminder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	var until time.Time
-	if body.Preset != "" {
-		cur, err := s.db.GetReminder(r.Context(), userID, id)
-		if err == storage.ErrNotFound {
-			writeError(w, http.StatusNotFound, "not found")
-			return
-		}
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "could not load reminder")
-			return
-		}
-		t, err := reminder.SnoozeUntil(body.Preset, time.Now().UTC(), cur.Timezone)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		until = t
-	} else if body.Until != "" {
-		t, err := time.Parse(time.RFC3339, body.Until)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "until must be RFC3339")
-			return
-		}
-		until = t
-	} else {
-		writeError(w, http.StatusBadRequest, "preset or until required")
+	until, err := time.Parse(time.RFC3339, body.Until)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "until must be RFC3339")
 		return
 	}
 	item, err := s.db.SnoozeReminder(r.Context(), userID, id, until)
-	if err == storage.ErrNotFound {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not snooze")
+		writeStorageError(w, err, "could not snooze reminder")
 		return
 	}
 	writeJSON(w, http.StatusOK, reminderPayload(item))
 }
 
-func (s *Server) handleSnoozePresets(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"presets": reminder.SnoozePresets()})
-}
-
-func (s *Server) ownedMailWordingID(r *http.Request, userID uuid.UUID, raw *string) (*uuid.UUID, error) {
-	if raw == nil || strings.TrimSpace(*raw) == "" {
-		return nil, nil
-	}
-	id, err := uuid.Parse(strings.TrimSpace(*raw))
-	if err != nil {
-		return nil, fmt.Errorf("invalid mail_wording_id")
-	}
-	if _, err := s.db.MailWordingByID(r.Context(), userID, id); err == storage.ErrNotFound {
-		return nil, fmt.Errorf("unknown message template")
-	} else if err != nil {
-		return nil, fmt.Errorf("could not load message template")
-	}
-	return &id, nil
-}
-
-func (s *Server) applyReminderOffsets(r *http.Request, userID, reminderID uuid.UUID, offsets []offsetInput) error {
-	for _, off := range offsets {
-		if _, err := s.db.CreateOffset(r.Context(), userID, reminderID, storage.OffsetCreateInput{
-			OffsetMinutes:   off.OffsetMinutes,
-			ChannelOverride: off.ChannelOverride,
-		}); err != nil {
-			return err
-		}
-	}
-	if len(offsets) == 0 {
-		return nil
-	}
-	item, err := s.db.GetReminder(r.Context(), userID, reminderID)
-	if err != nil {
-		return err
-	}
-	return s.db.RematerializeOccurrences(r.Context(), userID, item)
-}
-
-func (s *Server) replaceReminderOffsets(r *http.Request, userID, reminderID uuid.UUID, offsets []offsetInput) error {
-	current, err := s.db.ListOffsetsForReminder(r.Context(), userID, reminderID)
-	if err != nil {
-		return err
-	}
-	for _, off := range current {
-		if err := s.db.DeleteOffset(r.Context(), userID, off.ID); err != nil {
-			return err
-		}
-	}
-	return s.applyReminderOffsets(r, userID, reminderID, offsets)
-}
-
 func reminderPayload(r reminder.Reminder) map[string]any {
 	out := map[string]any{
-		"id":                   r.ID.String(),
-		"title":                r.Title,
-		"description":          r.Description,
-		"due_at":               r.DueAt.UTC().Format(time.RFC3339),
-		"timezone":             r.Timezone,
-		"status":               r.Status,
-		"priority":             r.Priority,
-		"pinned":               r.Pinned,
-		"tag_ids":              uuidStrings(r.TagIDs),
-		"recurrence_rule":      r.RecurrenceRule,
-		"channel_overrides":    r.ChannelOverrides,
-		"require_all_subtasks": r.RequireAllSubtasks,
-		"created_at":           r.CreatedAt.UTC().Format(time.RFC3339),
-		"updated_at":           r.UpdatedAt.UTC().Format(time.RFC3339),
+		"id":          r.ID.String(),
+		"title":       r.Title,
+		"description": r.Description,
+		"due_at":      r.DueAt.UTC().Format(time.RFC3339),
+		"timezone":    r.Timezone,
+		"status":      r.Status,
+		"priority":    r.Priority,
+		"recurrence":  r.Recurrence,
+		"pinned":      r.Pinned,
+		"created_at":  r.CreatedAt.UTC().Format(time.RFC3339),
+		"updated_at":  r.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 	if r.ListID != nil {
 		out["list_id"] = r.ListID.String()
-	}
-	if r.MailWordingID != nil {
-		out["mail_wording_id"] = r.MailWordingID.String()
-	}
-	if r.SeriesID != nil {
-		out["series_id"] = r.SeriesID.String()
-	}
-	if r.RecurrenceUntil != nil {
-		out["recurrence_until"] = r.RecurrenceUntil.UTC().Format(time.RFC3339)
-	}
-	if r.AssigneeID != nil {
-		out["assignee_id"] = r.AssigneeID.String()
-	}
-	if r.GroupID != nil {
-		out["group_id"] = r.GroupID.String()
-	}
-	if r.AttachmentURL != "" {
-		out["attachment_url"] = r.AttachmentURL
 	}
 	if r.SnoozedUntil != nil {
 		out["snoozed_until"] = r.SnoozedUntil.UTC().Format(time.RFC3339)

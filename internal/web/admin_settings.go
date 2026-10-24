@@ -1,357 +1,263 @@
 package web
 
 import (
-	"fmt"
+	"context"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/shivam-20/day-remind/internal/config"
 	"github.com/shivam-20/day-remind/internal/notify"
+	"github.com/shivam-20/day-remind/internal/secret"
 	"github.com/shivam-20/day-remind/internal/storage"
 )
 
-type adminDeliveryUpdateRequest struct {
-	EmailEnabled  *bool   `json:"email_enabled"`
-	EmailFrom     *string `json:"email_from"`
-	EmailProvider *string `json:"email_provider"`
-	ResendAPIKey  *string `json:"resend_api_key"`
+// adminSettingsPayload reports the instance configuration with credentials
+// redacted. "unreadable" tells an admin that something is stored but can no
+// longer be decrypted, which means SESSION_KEY changed — otherwise a rotated
+// key looks identical to a blank field.
+func (s *Server) adminSettingsPayload(inst storage.InstanceSettings) map[string]any {
+	tg := map[string]any{
+		"enabled":   inst.Telegram.Enabled,
+		"token_set": inst.Telegram.BotTokenEnc != "",
+	}
+	if inst.Telegram.BotTokenEnc != "" {
+		if tok, err := s.box.Decrypt(inst.Telegram.BotTokenEnc); err != nil {
+			tg["unreadable"] = true
+		} else {
+			tg["token_hint"] = secret.Hint(tok)
+		}
+	}
 
-	SMTPHost     *string `json:"smtp_host"`
-	SMTPPort     *int    `json:"smtp_port"`
-	SMTPUsername *string `json:"smtp_username"`
-	SMTPPassword *string `json:"smtp_password"`
-	SMTPTLSMode  *string `json:"smtp_tls_mode"`
+	smtp := smtpPayload(inst.SMTP)
+	if inst.SMTP.PasswordEnc != "" {
+		if _, err := s.box.Decrypt(inst.SMTP.PasswordEnc); err != nil {
+			smtp["unreadable"] = true
+		}
+	}
 
-	TelegramEnabled  *bool   `json:"telegram_enabled"`
-	TelegramBotToken *string `json:"telegram_bot_token"`
-
-	TelegramGatewayURL         *string `json:"telegram_gateway_url"`
-	TelegramGatewayAPIToken    *string `json:"telegram_gateway_api_token"`
-	TelegramGatewayInboundMode *string `json:"telegram_gateway_inbound_mode"`
-
-	AIProvider         *string `json:"ai_provider"`
-	OpenRouterAPIKey   *string `json:"openrouter_api_key"`
-	OpenRouterModel    *string `json:"openrouter_model"`
-	GeminiAPIKey       *string `json:"gemini_api_key"`
-	GeminiModel        *string `json:"gemini_model"`
-}
-
-type adminDeliveryTestRequest struct {
-	Channel string `json:"channel"`
-	To      string `json:"to"`
-}
-
-func (s *Server) handleAdminGetDeliverySettings(w http.ResponseWriter, r *http.Request) {
-	stored, err := s.db.GetDeliverySettings(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load delivery settings")
-		return
-	}
-	aiStored, err := s.db.GetAISettings(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load ai settings")
-		return
-	}
-	effective := notify.EffectiveDelivery(s.cfg, stored)
-	writeJSON(w, http.StatusOK, adminDeliveryPayload(stored, effective, aiStored, s.cfg))
-}
-
-func (s *Server) handleAdminUpdateDeliverySettings(w http.ResponseWriter, r *http.Request) {
-	var body adminDeliveryUpdateRequest
-	if err := decodeJSON(r, &body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
-		return
-	}
-	cur, err := s.db.GetDeliverySettings(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load delivery settings")
-		return
-	}
-	if err := validateDeliveryProviderSelection(cur, s.cfg, body); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if body.AIProvider != nil || body.OpenRouterAPIKey != nil || body.OpenRouterModel != nil ||
-		body.GeminiAPIKey != nil || body.GeminiModel != nil {
-		if _, err := s.db.UpdateAISettings(r.Context(), storage.AISettingsUpdate{
-			Provider:         body.AIProvider,
-			OpenRouterAPIKey: body.OpenRouterAPIKey,
-			OpenRouterModel:  body.OpenRouterModel,
-			GeminiAPIKey:     body.GeminiAPIKey,
-			GeminiModel:      body.GeminiModel,
-		}); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
-	stored, err := s.db.UpdateDeliverySettings(r.Context(), storage.DeliverySettingsUpdate{
-		EmailEnabled:     body.EmailEnabled,
-		EmailFrom:        body.EmailFrom,
-		EmailProvider:    body.EmailProvider,
-		ResendAPIKey:     body.ResendAPIKey,
-		SMTPHost:         body.SMTPHost,
-		SMTPPort:         body.SMTPPort,
-		SMTPUsername:     body.SMTPUsername,
-		SMTPPassword:     body.SMTPPassword,
-		SMTPTLSMode:      body.SMTPTLSMode,
-		TelegramEnabled:  body.TelegramEnabled,
-		TelegramBotToken: body.TelegramBotToken,
-
-		TelegramGatewayURL:         body.TelegramGatewayURL,
-		TelegramGatewayAPIToken:    body.TelegramGatewayAPIToken,
-		TelegramGatewayInboundMode: body.TelegramGatewayInboundMode,
-	})
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	aiStored, err := s.db.GetAISettings(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load ai settings")
-		return
-	}
-	effective := notify.EffectiveDelivery(s.cfg, stored)
-	writeJSON(w, http.StatusOK, adminDeliveryPayload(stored, effective, aiStored, s.cfg))
-}
-
-func (s *Server) handleAdminListOpenRouterModels(w http.ResponseWriter, r *http.Request) {
-	key := strings.TrimSpace(s.cfg.OpenRouterAPIKey)
-	if s.db != nil {
-		stored, err := s.db.GetAISettings(r.Context())
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "could not load ai settings")
-			return
-		}
-		if strings.TrimSpace(stored.OpenRouterAPIKey) != "" {
-			key = strings.TrimSpace(stored.OpenRouterAPIKey)
-		}
-	}
-	models, err := notify.ListOpenRouterModels(r.Context(), key, "")
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"models": models})
-}
-
-type adminAITestRequest struct {
-	Provider string `json:"provider"`
-	APIKey   string `json:"api_key"`
-	Model    string `json:"model"`
-}
-
-func (s *Server) handleAdminTestAI(w http.ResponseWriter, r *http.Request) {
-	var body adminAITestRequest
-	if err := decodeJSON(r, &body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
-		return
-	}
-	provider := strings.ToLower(strings.TrimSpace(body.Provider))
-	if provider != "openrouter" && provider != "gemini" {
-		writeError(w, http.StatusBadRequest, "provider must be openrouter or gemini")
-		return
-	}
-	key := strings.TrimSpace(body.APIKey)
-	model := strings.TrimSpace(body.Model)
-	var stored storage.AISettings
-	if s.db != nil {
-		var err error
-		stored, err = s.db.GetAISettings(r.Context())
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "could not load ai settings")
-			return
-		}
-	}
-	if provider == "openrouter" {
-		if key == "" {
-			key = strings.TrimSpace(stored.OpenRouterAPIKey)
-		}
-		if key == "" {
-			key = strings.TrimSpace(s.cfg.OpenRouterAPIKey)
-		}
-		if model == "" {
-			model = strings.TrimSpace(stored.OpenRouterModel)
-		}
-		if model == "" {
-			model = strings.TrimSpace(s.cfg.OpenRouterModel)
-		}
-	} else {
-		if key == "" {
-			key = strings.TrimSpace(stored.GeminiAPIKey)
-		}
-		if key == "" {
-			key = strings.TrimSpace(s.cfg.GeminiAPIKey)
-		}
-		if model == "" {
-			model = strings.TrimSpace(stored.GeminiModel)
-		}
-		if model == "" {
-			model = strings.TrimSpace(s.cfg.GeminiModel)
-		}
-	}
-	reply, err := notify.PingAI(r.Context(), notify.AIConfig{
-		Provider: provider,
-		APIKey:   key,
-		Model:    model,
-	})
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if len(reply) > 120 {
-		reply = reply[:120]
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "reply": reply, "model": model})
-}
-
-func (s *Server) handleAdminTestDelivery(w http.ResponseWriter, r *http.Request) {
-	var body adminDeliveryTestRequest
-	if err := decodeJSON(r, &body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
-		return
-	}
-	delivery, err := s.effectiveDelivery(r)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load delivery settings")
-		return
-	}
-	switch body.Channel {
-	case storage.ChannelEmail:
-		if err := notify.SendEmail(r.Context(), delivery, body.To, "Day Remind test", "<p>This is a test alert from Day Remind.</p>"); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-	case storage.ChannelTelegram:
-		if err := notify.SendTelegram(r.Context(), delivery, body.To, "Day Remind test: this is a test alert."); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-	default:
-		writeError(w, http.StatusBadRequest, "channel must be email or telegram")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
-}
-
-func adminDeliveryPayload(stored storage.DeliverySettings, effective notify.DeliveryConfig, aiStored storage.AISettings, cfg config.Config) map[string]any {
-	aiEffective := notify.EffectiveAI(cfg, aiStored)
-	avail := notify.ChannelAvailability(effective)
-	emailProvider := effective.EmailProvider
-	if emailProvider == "" {
-		emailProvider = notify.EmailProviderResend
-	}
-	orKey := aiStored.OpenRouterAPIKey
-	if strings.TrimSpace(orKey) == "" {
-		orKey = cfg.OpenRouterAPIKey
-	}
-	gemKey := aiStored.GeminiAPIKey
-	if strings.TrimSpace(gemKey) == "" {
-		gemKey = cfg.GeminiAPIKey
-	}
-	uiAIProvider := strings.TrimSpace(aiStored.Provider)
-	if uiAIProvider == "" {
-		uiAIProvider = strings.TrimSpace(cfg.AIProvider)
-	}
 	out := map[string]any{
-		"email": map[string]any{
-			"enabled":           effective.EmailEnabled,
-			"from":              effective.EmailFrom,
-			"provider":          emailProvider,
-			"configured":        notify.EmailProviderReady(effective),
-			"available":         avail[storage.ChannelEmail],
-			"api_key_hint":      notify.MaskSecret(effective.ResendAPIKey),
-			"uses_env_fallback": stored.ResendAPIKey == "" && cfg.ResendAPIKey != "",
-			"resend_ready":      effective.ResendAPIKey != "",
-			"smtp_ready":        effective.SMTPHost != "",
-		},
-		"smtp": map[string]any{
-			"host":              effective.SMTPHost,
-			"port":              effective.SMTPPort,
-			"username":          effective.SMTPUsername,
-			"tls_mode":          notify.NormalizeSMTPTLSMode(effective.SMTPTLSMode),
-			"configured":        effective.SMTPHost != "" && effective.EmailFrom != "",
-			"password_hint":     notify.MaskSecret(effective.SMTPPassword),
-			"uses_env_fallback": stored.SMTPHost == "" && cfg.SMTPHost != "",
-		},
-		"telegram": map[string]any{
-			"enabled":                effective.TelegramEnabled,
-			"configured":             effective.TelegramBotToken != "",
-			"available":              avail[storage.ChannelTelegram],
-			"bot_token_hint":         notify.MaskSecret(effective.TelegramBotToken),
-			"uses_env_fallback":      stored.TelegramBotToken == "" && cfg.TelegramBotToken != "",
-			"gateway_url":            effective.TelegramGatewayURL,
-			"gateway_configured":     effective.TelegramGatewayURL != "" && effective.TelegramGatewayAPIToken != "",
-			"gateway_api_token_hint": notify.MaskSecret(effective.TelegramGatewayAPIToken),
-			"gateway_inbound_mode":   effective.TelegramGatewayInboundMode,
-			"uses_gateway":           effective.TelegramGatewayURL != "" && effective.TelegramGatewayAPIToken != "",
-		},
+		"smtp":      smtp,
+		"telegram":  tg,
+		"templates": templatePayload(inst.Templates),
+		"defaults":  templatePayload(notify.DefaultTemplates()),
+		"variables": notify.TemplateVariables,
 	}
-	out["ai"] = map[string]any{
-		"provider":                uiAIProvider,
-		"active_provider":         aiEffective.Provider,
-		"configured":              strings.TrimSpace(aiEffective.APIKey) != "",
-		"openrouter_model":        firstNonEmpty(aiStored.OpenRouterModel, cfg.OpenRouterModel, "google/gemini-2.5-flash"),
-		"openrouter_api_key_hint": notify.MaskSecret(orKey),
-		"openrouter_key_saved":    aiStored.OpenRouterAPIKey != "",
-		"openrouter_uses_env":     aiStored.OpenRouterAPIKey == "" && cfg.OpenRouterAPIKey != "",
-		"gemini_model":            firstNonEmpty(aiStored.GeminiModel, cfg.GeminiModel, "gemini-2.5-flash"),
-		"gemini_api_key_hint":     notify.MaskSecret(gemKey),
-		"gemini_key_saved":        aiStored.GeminiAPIKey != "",
-		"gemini_uses_env":         aiStored.GeminiAPIKey == "" && cfg.GeminiAPIKey != "",
-	}
-	if aiStored.UpdatedAt.IsZero() {
-		// omit
-	} else {
-		out["ai_updated_at"] = aiStored.UpdatedAt.UTC().Format(time.RFC3339)
-	}
-	if !stored.UpdatedAt.IsZero() {
-		out["updated_at"] = stored.UpdatedAt.UTC().Format(time.RFC3339)
+	if !inst.UpdatedAt.IsZero() {
+		out["updated_at"] = inst.UpdatedAt.UTC().Format(time.RFC3339)
 	}
 	return out
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
-		}
+func (s *Server) handleAdminGetSettings(w http.ResponseWriter, r *http.Request) {
+	inst, err := s.db.GetInstanceSettings(r.Context())
+	if err != nil {
+		writeStorageError(w, err, "could not load settings")
+		return
 	}
-	return ""
+	writeJSON(w, http.StatusOK, s.adminSettingsPayload(inst))
 }
 
-// validateDeliveryProviderSelection blocks the recurring misconfiguration of
-// selecting a provider whose credentials are absent while the other provider's
-// are present (e.g. choosing "Resend API" when only SMTP/Mailtrap is set up).
-// Values are fixture-friendly: nothing here reads or embeds real secrets.
-func validateDeliveryProviderSelection(cur storage.DeliverySettings, cfg config.Config, body adminDeliveryUpdateRequest) error {
-	provider := strings.ToLower(strings.TrimSpace(cur.EmailProvider))
-	if body.EmailProvider != nil {
-		provider = strings.ToLower(strings.TrimSpace(*body.EmailProvider))
+func (s *Server) handleAdminUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	actor := adminFromContext(r.Context())
+	inst, err := s.db.GetInstanceSettings(r.Context())
+	if err != nil {
+		writeStorageError(w, err, "could not load settings")
+		return
 	}
-	resendValue := strings.TrimSpace(cur.ResendAPIKey)
-	if body.ResendAPIKey != nil && strings.TrimSpace(*body.ResendAPIKey) != "" {
-		resendValue = strings.TrimSpace(*body.ResendAPIKey)
+
+	var body struct {
+		SMTP     *smtpInput `json:"smtp"`
+		Telegram *struct {
+			Enabled  *bool   `json:"enabled"`
+			BotToken *string `json:"bot_token"`
+		} `json:"telegram"`
 	}
-	if resendValue == "" {
-		resendValue = strings.TrimSpace(cfg.ResendAPIKey)
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
 	}
-	smtpHostValue := strings.TrimSpace(cur.SMTPHost)
-	if body.SMTPHost != nil {
-		smtpHostValue = strings.TrimSpace(*body.SMTPHost)
-	}
-	if smtpHostValue == "" {
-		smtpHostValue = strings.TrimSpace(cfg.SMTPHost)
-	}
-	switch provider {
-	case "resend":
-		if resendValue == "" && smtpHostValue != "" {
-			return fmt.Errorf("provider \"Resend API\" selected but no Resend API key is set, while SMTP is configured — select \"SMTP server\" if you are sending via SMTP/Mailtrap")
+
+	if body.SMTP != nil {
+		next, err := body.SMTP.apply(inst.SMTP, s.box.Encrypt)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not store the credential")
+			return
 		}
-	case "smtp":
-		if smtpHostValue == "" && resendValue != "" {
-			return fmt.Errorf("provider \"SMTP server\" selected but no SMTP host is set, while a Resend API key is configured — select \"Resend API\" if you are sending via Resend")
+		inst.SMTP = next
+	}
+	if body.Telegram != nil {
+		if body.Telegram.Enabled != nil {
+			inst.Telegram.Enabled = *body.Telegram.Enabled
+		}
+		if body.Telegram.BotToken != nil {
+			if *body.Telegram.BotToken == "" {
+				inst.Telegram.BotTokenEnc = ""
+			} else {
+				e, err := s.box.Encrypt(strings.TrimSpace(*body.Telegram.BotToken))
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "could not store the token")
+					return
+				}
+				inst.Telegram.BotTokenEnc = e
+			}
 		}
 	}
-	return nil
+
+	if err := s.db.SaveInstanceSettings(r.Context(), inst, actor.ID); err != nil {
+		writeStorageError(w, err, "could not save settings")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.adminSettingsPayload(inst))
+}
+
+// handleAdminTestSettings sends a sample message using the *instance*
+// configuration to the admin's own address and chat, bypassing their personal
+// overrides so the thing being tested is the thing being configured.
+func (s *Server) handleAdminTestSettings(w http.ResponseWriter, r *http.Request) {
+	actor := adminFromContext(r.Context())
+	inst, err := s.db.GetInstanceSettings(r.Context())
+	if err != nil {
+		writeStorageError(w, err, "could not load settings")
+		return
+	}
+
+	msg := notify.SampleMessage(false)
+	msg.Title = "Instance delivery test"
+	msg.Description = "Sent from the admin panel using the instance configuration."
+	msg.Timezone = actor.Timezone
+	msg.DisplayName = actor.DisplayName
+
+	templates := notify.Merge(notify.DefaultTemplates(), inst.Templates)
+	rendered, _ := notify.Render(templates, msg)
+
+	results := map[string]any{}
+
+	if inst.SMTP.Complete() {
+		password, err := s.box.Decrypt(inst.SMTP.PasswordEnc)
+		if err != nil {
+			results[notify.ChannelEmail] = map[string]any{
+				"ok": false, "error": "the stored password can no longer be read — re-enter it",
+			}
+		} else {
+			dest := actor.Notify.EmailAddress
+			if dest == "" {
+				dest = actor.Email
+			}
+			results[notify.ChannelEmail] = s.runTest(r.Context(), actor,
+				smtpSenderFor(inst.SMTP, password), dest, msg, rendered, notify.ChannelEmail)
+		}
+	}
+
+	if inst.Telegram.Complete() && actor.TelegramChatID != nil {
+		token, err := s.box.Decrypt(inst.Telegram.BotTokenEnc)
+		if err != nil {
+			results[notify.ChannelTelegram] = map[string]any{
+				"ok": false, "error": "the stored bot token can no longer be read — re-enter it",
+			}
+		} else {
+			results[notify.ChannelTelegram] = s.runTest(r.Context(), actor,
+				notify.NewTelegramClient(token, s.cfg.TelegramAPIBase),
+				strconv.FormatInt(*actor.TelegramChatID, 10), msg, rendered, notify.ChannelTelegram)
+		}
+	}
+
+	if len(results) == 0 {
+		writeError(w, http.StatusConflict,
+			"nothing to test: configure SMTP, or link your own Telegram chat to test the bot")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"results": results})
+}
+
+func (s *Server) runTest(ctx context.Context, actor storage.User, sender notify.Sender,
+	dest string, msg notify.Message, rendered notify.Rendered, channel string) map[string]any {
+
+	sendCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	err := sender.Send(sendCtx, dest, msg, rendered)
+	entry := storage.Delivery{
+		UserID: actor.ID, Channel: channel,
+		Kind: "admin-test", Status: storage.DeliverySent,
+	}
+	out := map[string]any{"ok": err == nil, "to": dest}
+	if err != nil {
+		entry.Status = storage.DeliveryFailed
+		entry.Detail = err.Error()
+		out["error"] = err.Error()
+	}
+	_ = s.db.LogDelivery(ctx, entry)
+	return out
+}
+
+// ----------------------------------------------------------- admin templates
+
+func (s *Server) handleAdminUpdateTemplates(w http.ResponseWriter, r *http.Request) {
+	actor := adminFromContext(r.Context())
+	ts, ok := decodeTemplateSet(w, r)
+	if !ok {
+		return
+	}
+	inst, err := s.db.GetInstanceSettings(r.Context())
+	if err != nil {
+		writeStorageError(w, err, "could not load settings")
+		return
+	}
+	inst.Templates = ts
+	if err := s.db.SaveInstanceSettings(r.Context(), inst, actor.ID); err != nil {
+		writeStorageError(w, err, "could not save templates")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.adminSettingsPayload(inst))
+}
+
+// handleAdminResetTemplates clears the overrides so the built-in defaults apply
+// again. It stores empty fields rather than copying the defaults in, so future
+// improvements to the defaults are picked up.
+func (s *Server) handleAdminResetTemplates(w http.ResponseWriter, r *http.Request) {
+	actor := adminFromContext(r.Context())
+	inst, err := s.db.GetInstanceSettings(r.Context())
+	if err != nil {
+		writeStorageError(w, err, "could not load settings")
+		return
+	}
+	inst.Templates = notify.TemplateSet{}
+	if err := s.db.SaveInstanceSettings(r.Context(), inst, actor.ID); err != nil {
+		writeStorageError(w, err, "could not reset templates")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.adminSettingsPayload(inst))
+}
+
+// handleAdminDeliveryLog exposes recent attempts so an admin can see failures
+// without shell access to the database.
+func (s *Server) handleAdminDeliveryLog(w http.ResponseWriter, r *http.Request) {
+	entries, err := s.db.RecentDeliveries(r.Context(), 50)
+	if err != nil {
+		writeStorageError(w, err, "could not load the delivery log")
+		return
+	}
+	out := make([]map[string]any, 0, len(entries))
+	for _, e := range entries {
+		row := map[string]any{
+			"channel":    e.Channel,
+			"kind":       e.Kind,
+			"status":     e.Status,
+			"created_at": e.CreatedAt.UTC().Format(time.RFC3339),
+		}
+		if e.Detail != "" {
+			row["detail"] = e.Detail
+		}
+		out = append(out, row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deliveries": out})
+}
+
+func smtpSenderFor(cfg storage.SMTPSettings, password string) *notify.SMTPSender {
+	cfg = cfg.Normalize()
+	return &notify.SMTPSender{
+		Host: cfg.Host, Port: cfg.Port, Username: cfg.Username,
+		Password: password, From: cfg.From, Mode: cfg.TLS,
+	}
 }

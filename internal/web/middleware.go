@@ -2,8 +2,8 @@ package web
 
 import (
 	"context"
+	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/shivam-20/day-remind/internal/storage"
@@ -12,58 +12,27 @@ import (
 type contextKey string
 
 const userIDKey contextKey = "userID"
+const adminUserKey contextKey = "adminUser"
 
 func (s *Server) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Primary path: day-remind's own session cookie (opaque token in Mongo).
-		if token := sessionTokenFromRequest(r); token != "" {
-			if userID, err := s.db.GetSessionUserID(r.Context(), token); err == nil {
-				s.syncAdminFromHeaders(r, userID)
-				ctx := context.WithValue(r.Context(), userIDKey, userID)
-				next.ServeHTTP(w, r.WithContext(ctx))
-				return
-			}
-		}
-		// Fallback: Caddy forward_auth identity headers (Launchpad SSO). Checked
-		// before the JWT because /auth/verify reads the live role from the IdP,
-		// whereas the cookie's role claim is frozen at sign-in.
-		if userID, ok := s.userFromHeaders(r); ok {
-			ctx := context.WithValue(r.Context(), userIDKey, userID)
-			next.ServeHTTP(w, r.WithContext(ctx))
-			return
-		}
-		// Fallback: shared gateway JWT (auth_token cookie) from the home page.
-		if userID, ok := s.userFromGateway(r); ok {
-			ctx := context.WithValue(r.Context(), userIDKey, userID)
-			next.ServeHTTP(w, r.WithContext(ctx))
-			return
-		}
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-	})
-}
-
-func (s *Server) requireAPIKey(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
-		if !strings.HasPrefix(authHeader, "Bearer ") {
+		token := sessionTokenFromRequest(r)
+		if token == "" {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
-		if !strings.HasPrefix(token, "dr_") {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
-			return
-		}
-		user, err := s.db.GetUserByAPIKeyHash(r.Context(), storage.HashAPIKeyToken(token))
-		if err == storage.ErrNotFound {
+		userID, err := s.db.GetSessionUserID(r.Context(), token)
+		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "could not authenticate")
+			// A database outage is not an authentication failure; reporting it
+			// as one would log every user out instead of surfacing the fault.
+			writeError(w, http.StatusServiceUnavailable, "service unavailable")
 			return
 		}
-		ctx := context.WithValue(r.Context(), userIDKey, user.ID)
+		ctx := context.WithValue(r.Context(), userIDKey, userID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -80,14 +49,30 @@ func sessionTokenFromRequest(r *http.Request) string {
 	return ""
 }
 
+// requireAdmin runs after requireSession and rejects anyone whose stored role
+// is not admin. The role is read from the database on every request rather
+// than trusted from the session, so a demotion takes effect immediately.
 func (s *Server) requireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		userID := userIDFromContext(r.Context())
-		user, err := s.db.GetUserByID(r.Context(), userID)
-		if err != nil || !user.IsAdmin {
-			writeError(w, http.StatusForbidden, "admin required")
+		user, err := s.db.GetUserByID(r.Context(), userIDFromContext(r.Context()))
+		if errors.Is(err, storage.ErrNotFound) {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		next.ServeHTTP(w, r)
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "service unavailable")
+			return
+		}
+		if user.Role != storage.RoleAdmin {
+			// Deliberately 404, not 403: a non-admin is not told the panel exists.
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), adminUserKey, user)))
 	})
+}
+
+func adminFromContext(ctx context.Context) storage.User {
+	v, _ := ctx.Value(adminUserKey).(storage.User)
+	return v
 }

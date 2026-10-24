@@ -1,0 +1,9 @@
+name = "dev4help-remind-proxy"
+main = "src/worker.js"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+account_id = "876952dffd97168515448bd832fc2fec"
+
+[[routes]]
+pattern = "dev4help.in/remind*"
+zone_name = "dev4help.in"

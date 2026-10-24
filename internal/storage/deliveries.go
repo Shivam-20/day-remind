@@ -2,202 +2,97 @@ package storage
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
+// Delivery is one attempt to send one notification over one channel. The log is
+// append-only and exists so failures are visible rather than silent.
+type Delivery struct {
+	ID         uuid.UUID
+	UserID     uuid.UUID
+	ReminderID uuid.UUID
+	Channel    string
+	Kind       string
+	Status     string
+	Detail     string
+	CreatedAt  time.Time
+}
+
 const (
-	DeliveryStatusPending = "pending"
-	DeliveryStatusSent    = "sent"
-	DeliveryStatusFailed  = "failed"
-	DeliveryStatusSkipped = "skipped"
+	DeliverySent   = "sent"
+	DeliveryFailed = "failed"
 )
 
-const maxDeliveryAttempts = 3
-
-type Delivery struct {
-	ID             uuid.UUID
-	ReminderID     uuid.UUID
-	UserID         uuid.UUID
-	Channel        string
-	Status         string
-	AttemptCount   int
-	LastError      string
-	SentAt         *time.Time
-	IdempotencyKey string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-}
-
 type deliveryDoc struct {
-	ID             uuid.UUID  `bson:"_id"`
-	ReminderID     uuid.UUID  `bson:"reminder_id"`
-	UserID         uuid.UUID  `bson:"user_id"`
-	Channel        string     `bson:"channel"`
-	Status         string     `bson:"status"`
-	AttemptCount   int        `bson:"attempt_count"`
-	LastError      string     `bson:"last_error"`
-	SentAt         *time.Time `bson:"sent_at,omitempty"`
-	IdempotencyKey string     `bson:"idempotency_key"`
-	CreatedAt      time.Time  `bson:"created_at"`
-	UpdatedAt      time.Time  `bson:"updated_at"`
+	ID         uuid.UUID `bson:"_id"`
+	UserID     uuid.UUID `bson:"user_id"`
+	ReminderID uuid.UUID `bson:"reminder_id"`
+	Channel    string    `bson:"channel"`
+	Kind       string    `bson:"kind"`
+	Status     string    `bson:"status"`
+	Detail     string    `bson:"detail,omitempty"`
+	CreatedAt  time.Time `bson:"created_at"`
 }
 
-func deliveryRecordFromDoc(doc deliveryDoc) Delivery {
-	return Delivery{
-		ID:             doc.ID,
-		ReminderID:     doc.ReminderID,
-		UserID:         doc.UserID,
-		Channel:        doc.Channel,
-		Status:         doc.Status,
-		AttemptCount:   doc.AttemptCount,
-		LastError:      doc.LastError,
-		SentAt:         doc.SentAt,
-		IdempotencyKey: doc.IdempotencyKey,
-		CreatedAt:      doc.CreatedAt,
-		UpdatedAt:      doc.UpdatedAt,
+// LogDelivery records an attempt. It never returns an error to the caller's
+// critical path decision — sending already happened or already failed — but the
+// error is surfaced so the scheduler can log it.
+func (db *DB) LogDelivery(ctx context.Context, d Delivery) error {
+	// Keep the stored detail bounded; SMTP and API errors can be verbose.
+	const maxDetail = 500
+	if len(d.Detail) > maxDetail {
+		d.Detail = d.Detail[:maxDetail]
 	}
-}
-
-func (db *DB) CreateDelivery(ctx context.Context, d Delivery) (Delivery, error) {
-	now := time.Now().UTC()
-	if d.ID == uuid.Nil {
-		d.ID = uuid.New()
-	}
-	doc := deliveryDoc{
-		ID:             d.ID,
-		ReminderID:     d.ReminderID,
-		UserID:         d.UserID,
-		Channel:        d.Channel,
-		Status:         d.Status,
-		AttemptCount:   d.AttemptCount,
-		LastError:      d.LastError,
-		SentAt:         d.SentAt,
-		IdempotencyKey: d.IdempotencyKey,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-	}
-	_, err := db.collection("reminder_deliveries").InsertOne(ctx, doc)
-	if err != nil {
-		if mongo.IsDuplicateKeyError(err) {
-			return Delivery{}, ErrConflict
-		}
-		return Delivery{}, err
-	}
-	return deliveryRecordFromDoc(doc), nil
-}
-
-func (db *DB) MarkDeliverySent(ctx context.Context, id uuid.UUID) error {
-	now := time.Now().UTC()
-	res, err := db.collection("reminder_deliveries").UpdateOne(ctx, bson.M{"_id": id}, bson.M{
-		"$set": bson.M{
-			"status":     DeliveryStatusSent,
-			"sent_at":    now,
-			"updated_at": now,
-		},
-	})
-	if err != nil {
-		return err
-	}
-	if res.MatchedCount == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
-func (db *DB) MarkDeliveryFailed(ctx context.Context, id uuid.UUID, errMsg string) error {
-	now := time.Now().UTC()
-	res, err := db.collection("reminder_deliveries").UpdateOne(ctx, bson.M{"_id": id}, bson.M{
-		"$set": bson.M{
-			"status":     DeliveryStatusFailed,
-			"last_error": errMsg,
-			"updated_at": now,
-		},
-		"$inc": bson.M{"attempt_count": 1},
-	})
-	if err != nil {
-		return err
-	}
-	if res.MatchedCount == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
-func (db *DB) MarkDeliverySkipped(ctx context.Context, id uuid.UUID, reason string) error {
-	now := time.Now().UTC()
-	_, err := db.collection("reminder_deliveries").UpdateOne(ctx, bson.M{"_id": id}, bson.M{
-		"$set": bson.M{
-			"status":     DeliveryStatusSkipped,
-			"last_error": reason,
-			"updated_at": now,
-		},
+	_, err := db.collection("deliveries").InsertOne(ctx, deliveryDoc{
+		ID:         uuid.New(),
+		UserID:     d.UserID,
+		ReminderID: d.ReminderID,
+		Channel:    d.Channel,
+		Kind:       d.Kind,
+		Status:     d.Status,
+		Detail:     d.Detail,
+		CreatedAt:  time.Now().UTC(),
 	})
 	return err
 }
 
-func (db *DB) ListDeliveriesForReminder(ctx context.Context, userID, reminderID uuid.UUID, limit int) ([]Delivery, error) {
-	if limit <= 0 || limit > 100 {
+// RecentDeliveries powers the delivery log in the admin panel.
+func (db *DB) RecentDeliveries(ctx context.Context, limit int64) ([]Delivery, error) {
+	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	cur, err := db.collection("reminder_deliveries").Find(ctx, bson.M{
-		"reminder_id": reminderID,
-		"user_id":     userID,
-	}, options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(int64(limit)))
+	cur, err := db.collection("deliveries").Find(ctx, bson.M{},
+		options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(limit))
 	if err != nil {
 		return nil, err
 	}
 	defer cur.Close(ctx)
-	return decodeDeliveries(cur, ctx)
-}
 
-func (db *DB) ListRecentDeliveriesForUser(ctx context.Context, userID uuid.UUID, limit int) ([]Delivery, error) {
-	if limit <= 0 || limit > 50 {
-		limit = 20
-	}
-	cur, err := db.collection("reminder_deliveries").Find(ctx, bson.M{"user_id": userID},
-		options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(int64(limit)))
-	if err != nil {
-		return nil, err
-	}
-	defer cur.Close(ctx)
-	return decodeDeliveries(cur, ctx)
-}
-
-func (db *DB) ListRetryableDeliveries(ctx context.Context, limit int) ([]Delivery, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 100
-	}
-	cutoff := time.Now().UTC().Add(-2 * time.Minute)
-	cur, err := db.collection("reminder_deliveries").Find(ctx, bson.M{
-		"status":        DeliveryStatusFailed,
-		"attempt_count": bson.M{"$lt": maxDeliveryAttempts},
-		"updated_at":    bson.M{"$lte": cutoff},
-	}, options.Find().SetLimit(int64(limit)))
-	if err != nil {
-		return nil, err
-	}
-	defer cur.Close(ctx)
-	return decodeDeliveries(cur, ctx)
-}
-
-func decodeDeliveries(cur *mongo.Cursor, ctx context.Context) ([]Delivery, error) {
 	var out []Delivery
 	for cur.Next(ctx) {
 		var doc deliveryDoc
 		if err := cur.Decode(&doc); err != nil {
 			return nil, err
 		}
-		out = append(out, deliveryRecordFromDoc(doc))
+		out = append(out, Delivery{
+			ID:         doc.ID,
+			UserID:     doc.UserID,
+			ReminderID: doc.ReminderID,
+			Channel:    doc.Channel,
+			Kind:       doc.Kind,
+			Status:     doc.Status,
+			Detail:     doc.Detail,
+			CreatedAt:  doc.CreatedAt,
+		})
 	}
 	return out, cur.Err()
 }
 
-func DeliveryIdempotencyKey(reminderID uuid.UUID, channel string, dueAt time.Time) string {
-	return fmt.Sprintf("%s:%s:%d", reminderID.String(), channel, dueAt.UTC().Unix())
+// CountDeliveries reports sent/failed totals for the admin stats row.
+func (db *DB) CountDeliveries(ctx context.Context, status string) (int64, error) {
+	return db.collection("deliveries").CountDocuments(ctx, bson.M{"status": status})
 }

@@ -1,9 +1,9 @@
 .env
+.botkeep-api-key
+.botkeep-sftp.env
 bin/
 data/
 *.db
-.backup-rollout/
 
-# AI tooling caches
-.mimosa/
-.v2c/
+# Local editor/agent state
+.cursor/

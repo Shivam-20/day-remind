@@ -9,8 +9,14 @@ import (
 
 const bcryptCost = 12
 
+// Normalize is applied to a password both when hashing and when checking, so
+// the two can never disagree about what the user actually typed.
+func Normalize(password string) string {
+	return strings.TrimSpace(password)
+}
+
 func HashPassword(password string) (string, error) {
-	password = strings.TrimSpace(password)
+	password = Normalize(password)
 	if len(password) < 8 {
 		return "", fmt.Errorf("password must be at least 8 characters")
 	}
@@ -22,5 +28,5 @@ func HashPassword(password string) (string, error) {
 }
 
 func CheckPassword(hash, password string) bool {
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(Normalize(password))) == nil
 }

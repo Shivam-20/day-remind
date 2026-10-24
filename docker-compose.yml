@@ -1,12 +1,11 @@
 services:
   mongo:
     image: mongo:7
-    restart: unless-stopped
     environment:
       MONGO_INITDB_ROOT_USERNAME: dayremind
       MONGO_INITDB_ROOT_PASSWORD: dayremind
     ports:
-      - "127.0.0.1:27017:27017"
+      - "27017:27017"
     volumes:
       - day_remind_mongo:/data/db
     healthcheck:
@@ -15,35 +14,14 @@ services:
       timeout: 5s
       retries: 5
 
-  app:
-    build:
-      context: .
-      # go.mod replaces github.com/shivam-20/telegram-gateway with the local
-      # sibling checkout; expose it to the image build as a named context.
-      additional_contexts:
-        telegram-gateway: ../telegram-gateway
-    container_name: day-remind-app
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      # container reaches mongo by service name (overrides localhost .env value)
-      DATABASE_URL: mongodb://dayremind:dayremind@mongo:27017/day_remind?authSource=admin
-      # Telegram Gateway lives on a1-watcher, not this compose file.
-      # Set TELEGRAM_GATEWAY_URL=https://dev4help.in/tg in .env (not Docker DNS).
-      # TELEGRAM_GATEWAY_URL: https://dev4help.in/tg
-      # TELEGRAM_GATEWAY_API_TOKEN: tgw_...
-      # TELEGRAM_GATEWAY_INBOUND_MODE: poll
-    networks:
-      - default
-      - apps-net
-    depends_on:
-      mongo:
-        condition: service_healthy
+  # Local SMTP catcher for development: nothing leaves the machine.
+  # Web UI on http://localhost:8025, SMTP on :1025.
+  # Use SMTP_HOST=localhost SMTP_PORT=1025 SMTP_TLS=none SMTP_FROM=dev@day-remind.local
+  mailhog:
+    image: mailhog/mailhog:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
 
 volumes:
   day_remind_mongo:
-
-networks:
-  apps-net:
-    external: true

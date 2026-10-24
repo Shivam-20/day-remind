@@ -1,124 +1,142 @@
-/* Phases 4–12: calendar, lists, settings sub-pages, enhanced drawers */
+/* Feature routes: calendar, lists, settings sub-pages. */
 window.DR_FEATURE_ROUTES = {
-  '/today': renderTodayEnhanced,
-  '/reminders': renderRemindersEnhanced,
   '/calendar': renderCalendar,
   '/lists': renderLists,
-  '/settings': renderSettingsEnhanced,
-  '/settings/data': renderDataSettings,
-  '/settings/templates': renderTemplateGallery,
   '/settings/wording': renderMessageWording,
-  '/settings/google': renderGoogleSettings,
-  '/settings/account': renderAccountSettings,
 };
 
 const featureState = {
-  lists: [],
-  tags: [],
-  searchQuery: '',
-  listFilter: '',
-  tagFilter: '',
-  priorityFilter: '',
   calendarMonth: new Date(),
   selectedDay: null,
 };
 
-const OFFSET_PRESETS = [
-  { label: '15m', minutes: 15 },
-  { label: '1h', minutes: 60 },
-  { label: '1d', minutes: 1440 },
-  { label: '1w', minutes: 10080 },
-];
+const LIST_PALETTE = ['#7cacf8', '#f5a623', '#6bcf7f', '#f07178', '#b48ef0', '#4ec3d4'];
 
-function sendByLabel(overrides) {
-  const names = { email: 'Email', telegram: 'Telegram' };
-  const picked = Object.keys(overrides || {}).filter((key) => overrides[key]).map((key) => names[key] || key);
-  return picked.length ? picked.join(', ') : 'Account default';
+function localDayKey(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
-const RECURRENCE_PRESETS = [
-  { value: '', label: 'None' },
-  { value: 'daily', label: 'Daily' },
-  { value: 'weekly', label: 'Weekly' },
-  { value: 'monthly', label: 'Monthly' },
-  { value: 'yearly', label: 'Yearly' },
-];
-
-function buildRecurrenceRule(preset, dueLocal) {
-  if (!preset) return '';
-  const freq = { daily: 'DAILY', weekly: 'WEEKLY', monthly: 'MONTHLY', yearly: 'YEARLY' }[preset];
-  if (!freq) return '';
-  const dt = new Date(dueLocal);
-  const pad = (n) => String(n).padStart(2, '0');
-  const dtstart = `${dt.getUTCFullYear()}${pad(dt.getUTCMonth() + 1)}${pad(dt.getUTCDate())}T${pad(dt.getUTCHours())}${pad(dt.getUTCMinutes())}${pad(dt.getUTCSeconds())}Z`;
-  return `DTSTART:${dtstart}\nRRULE:FREQ=${freq}`;
+// The calendar API is optional; reminders are a complete fallback.
+async function loadCalendarEvents(from, to) {
+  try {
+    const data = await API.get(`/api/calendar?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`);
+    return data.events || [];
+  } catch {
+    await loadReminders();
+    return (state.reminders || [])
+      .filter((r) => r.status !== 'cancelled')
+      .map((r) => ({
+        id: r.id,
+        title: r.title,
+        start: r.due_at,
+        status: r.status,
+        priority: r.priority,
+        timezone: r.timezone,
+        pinned: r.pinned,
+        recurrence: r.recurrence,
+      }));
+  }
 }
 
-async function loadListsAndTags() {
-  const [listsData, tagsData] = await Promise.all([
-    API.get('/api/lists'),
-    API.get('/api/tags'),
-  ]);
-  featureState.lists = listsData.lists || [];
-  featureState.tags = tagsData.tags || [];
-  return featureState;
+// ---------------------------------------------------------------- calendar
+
+function calDotClass(ev) {
+  if (ev.status === 'done') return '';
+  if (new Date(ev.start) < new Date()) return 'cal-dot-overdue';
+  if (ev.priority === 'urgent' || ev.priority === 'high') return `cal-dot-${ev.priority}`;
+  return '';
 }
 
 async function renderCalendar() {
   const year = featureState.calendarMonth.getFullYear();
   const month = featureState.calendarMonth.getMonth();
-  const from = new Date(year, month, 1);
-  const to = new Date(year, month + 1, 0, 23, 59, 59);
-  const data = await API.get(`/api/calendar?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`);
-  const events = data.events || [];
+  const firstDow = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const totalCells = Math.ceil((firstDow + daysInMonth) / 7) * 7;
+  const from = new Date(year, month, 1 - firstDow);
+  const to = new Date(year, month, 1 - firstDow + totalCells, 23, 59, 59);
+  const events = await loadCalendarEvents(from, to);
   const byDay = {};
   events.forEach((ev) => {
-    const key = ev.start.slice(0, 10);
+    const key = localDayKey(ev.start);
+    if (!key) return;
     if (!byDay[key]) byDay[key] = [];
     byDay[key].push(ev);
   });
 
-  const firstDow = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
   const monthLabel = featureState.calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const todayKey = localDayKey(new Date().toISOString());
+  const pillClass = (ev) => {
+    const d = calDotClass(ev);
+    if (d === 'cal-dot-overdue') return 'cal-ev cal-ev-overdue';
+    if (d === 'cal-dot-urgent') return 'cal-ev cal-ev-urgent';
+    if (d === 'cal-dot-high') return 'cal-ev cal-ev-high';
+    return 'cal-ev';
+  };
   let cells = '';
-  for (let i = 0; i < firstDow; i++) {
-    cells += '<div class="cal-cell cal-empty"></div>';
-  }
-  const todayKey = new Date().toISOString().slice(0, 10);
-  for (let d = 1; d <= daysInMonth; d++) {
-    const key = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    const count = (byDay[key] || []).length;
+  for (let i = 0; i < totalCells; i++) {
+    const d = new Date(year, month, 1 - firstDow + i);
+    const key = localDayKey(d.toISOString());
+    const inMonth = d.getMonth() === month;
+    const shown = (byDay[key] || []).filter((ev) => ev.status !== 'done' && ev.status !== 'cancelled');
+    const dots = shown.slice(0, 3)
+      .map((ev) => `<i class="cal-dot ${calDotClass(ev)}" aria-hidden="true"></i>`)
+      .join('');
+    const pills = shown.slice(0, 2).map((ev) => {
+      const when = new Date(ev.start);
+      const time = Number.isNaN(when.getTime()) ? '' : when.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      return `<span class="${pillClass(ev)}"><span class="cal-ev-time">${time}</span><span class="cal-ev-title">${escapeHTML(ev.title)}</span></span>`;
+    }).join('');
+    const more = shown.length > 2 ? `<span class="cal-more">+${shown.length - 2} more</span>` : '';
     const isToday = key === todayKey;
     const isSelected = featureState.selectedDay === key;
-    cells += `<button type="button" class="cal-cell${isToday ? ' cal-today' : ''}${isSelected ? ' cal-selected' : ''}" data-day="${key}">
-      <span class="cal-day-num">${d}</span>
-      ${count ? `<span class="cal-dot" title="${count} reminder(s)"></span>` : ''}
+    const ariaLabel = `${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}${shown.length ? `, ${shown.length} reminder${shown.length !== 1 ? 's' : ''}` : ''}`;
+    cells += `<button type="button" class="cal-cell${inMonth ? '' : ' cal-out'}${isToday ? ' cal-today' : ''}${isSelected ? ' cal-selected' : ''}" data-day="${key}" aria-label="${escapeHTML(ariaLabel)}">
+      <span class="cal-day-num">${d.getDate()}</span>
+      <span class="cal-evs">${pills}${more}</span>
+      <span class="cal-dots">${dots}</span>
     </button>`;
   }
 
   const selectedEvents = featureState.selectedDay ? (byDay[featureState.selectedDay] || []) : [];
   const sidePanel = featureState.selectedDay
-    ? `<div class="cal-side card">
-        <h3>${new Date(featureState.selectedDay + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</h3>
-        <div class="reminder-list">
-          ${selectedEvents.length
-            ? selectedEvents.map((ev) => reminderCardHTML(
-                { id: ev.id, title: ev.title, due_at: ev.start, status: ev.status, priority: ev.priority },
-                `<button class="btn btn-sm" data-action="detail" data-id="${ev.id}">Details</button>`
-              )).join('')
-            : emptyState('No reminders', 'Nothing scheduled this day.')}
+    ? `<div class="card">
+        <div class="cal-side-title">
+          <h3>${new Date(featureState.selectedDay + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</h3>
+          <span>${selectedEvents.length} reminder${selectedEvents.length !== 1 ? 's' : ''}</span>
         </div>
+        ${selectedEvents.length
+          ? selectedEvents.map((ev) => `
+            <div class="cal-srow${isOverdue(ev) ? ' late' : ''}">
+              <i class="cal-dot ${calDotClass(ev)} cal-srow-dot" aria-hidden="true"></i>
+              <span class="cal-srow-when">${escapeHTML(formatDue(ev.start, ev.timezone))}</span>
+              <span class="cal-srow-title">${ev.pinned ? iconHTML('pin') : ''}${escapeHTML(ev.title)}</span>
+              <button type="button" class="icon-btn" data-action="detail" data-id="${escapeHTML(ev.id)}" aria-label="Details for ${escapeHTML(ev.title)}">${actionIconSVG('info')}</button>
+            </div>`).join('')
+          : emptyState('Nothing scheduled', 'Enjoy the empty day.', '', 'sun')}
+        <button class="cal-add" type="button" id="cal-add-day">${actionIconSVG('calendar-plus')}Add for this day</button>
       </div>`
-    : '<div class="cal-side card"><p class="page-sub">Click a day to see reminders</p></div>';
+    : '<div class="card"><p class="page-sub" style="margin:0">Click a day to see its reminders.</p></div>';
 
   const main = `
     <h1 class="page-title">Calendar</h1>
-    <div class="cal-toolbar">
-      <button class="btn btn-sm" id="cal-prev" type="button">←</button>
-      <strong>${monthLabel}</strong>
-      <button class="btn btn-sm" id="cal-next" type="button">→</button>
-      <button class="btn btn-sm" id="cal-today" type="button">Today</button>
+    <div class="cal-headrow">
+      <div class="cal-month">
+        <button class="icon-btn" id="cal-prev" type="button" aria-label="Previous month">${actionIconSVG('chevron-left')}</button>
+        <strong>${monthLabel}</strong>
+        <button class="icon-btn" id="cal-next" type="button" aria-label="Next month">${actionIconSVG('chevron-right')}</button>
+        <button class="cal-today-btn" id="cal-today" type="button">Today</button>
+      </div>
+      <div class="cal-legend" aria-hidden="true">
+        <span><i style="background:var(--danger)"></i>overdue</span>
+        <span><i style="background:var(--warning)"></i>high</span>
+        <span><i style="background:var(--border-strong)"></i>normal</span>
+      </div>
     </div>
     <div class="cal-layout">
       <div class="cal-grid-wrap card">
@@ -130,7 +148,7 @@ async function renderCalendar() {
       ${sidePanel}
     </div>
   `;
-  document.getElementById('app').innerHTML = shellHTML('/calendar', main);
+  document.getElementById('app').innerHTML = shellHTML('/calendar', main, 'Calendar');
   bindShell('/calendar');
   document.getElementById('cal-prev')?.addEventListener('click', () => {
     featureState.calendarMonth = new Date(year, month - 1, 1);
@@ -144,7 +162,7 @@ async function renderCalendar() {
   });
   document.getElementById('cal-today')?.addEventListener('click', () => {
     featureState.calendarMonth = new Date();
-    featureState.selectedDay = new Date().toISOString().slice(0, 10);
+    featureState.selectedDay = localDayKey(new Date().toISOString());
     renderCalendar();
   });
   document.querySelectorAll('.cal-cell[data-day]').forEach((btn) => {
@@ -153,50 +171,144 @@ async function renderCalendar() {
       renderCalendar();
     });
   });
+  document.getElementById('cal-add-day')?.addEventListener('click', () => {
+    const day = featureState.selectedDay;
+    closeAllMenus();
+    if (day) openCreatePage(new Date(day + "T00:00:00"));
+  });
   bindReminderActions(document.getElementById('app'), () => renderCalendar());
 }
 
+// ---------------------------------------------------------------- lists
+
+// The lists API is optional; without it, lists are derived from reminders.
+async function loadListsOrFallback() {
+  try {
+    const data = await API.get('/api/lists');
+    return { lists: data.lists || [], canManage: true };
+  } catch {
+    await loadReminders();
+    const groups = {};
+    (state.reminders || []).forEach((r) => {
+      const id = r.list_id || 'unlisted';
+      if (!groups[id]) {
+        groups[id] = {
+          id,
+          name: id === 'unlisted' ? 'Unlisted' : 'List',
+          count: 0,
+          done: 0,
+          overdue: 0,
+          paused: false,
+        };
+      }
+      if (r.status === 'done') groups[id].done += 1;
+      else {
+        groups[id].count += 1;
+        if (isOverdue(r)) groups[id].overdue += 1;
+      }
+    });
+    return { lists: Object.values(groups), canManage: false };
+  }
+}
+
 async function renderLists() {
-  const data = await API.get('/api/lists');
-  const lists = data.lists || [];
+  const { lists, canManage } = await loadListsOrFallback();
   const countLabel = lists.length === 1 ? '1 list' : `${lists.length} lists`;
-  const cards = lists.map((l) => `
-        <article class="list-card card" style="--list-color:${escapeHTML(l.color || '#3b82f6')}">
-          <div class="list-card-stripe"></div>
-          <div class="list-card-body">
-            <h3>${escapeHTML(l.name)}</h3>
-            <p class="page-sub">${l.count ?? 0} active · ${l.paused ? 'Paused' : 'Active'}</p>
-          </div>
-          <div class="list-card-actions">
-            ${l.paused
-              ? `<button class="btn btn-sm" data-resume="${l.id}">Resume</button>`
-              : `<button class="btn btn-sm" data-pause="${l.id}">Pause</button>`}
-          </div>
-        </article>
-      `).join('');
+
+  const cards = lists.map((l, i) => {
+    const color = l.color || LIST_PALETTE[i % LIST_PALETTE.length];
+    const paused = l.paused;
+    const total = l.done != null ? l.count + l.done : (l.count ?? 0);
+    return `
+      <article class="list-card${paused ? ' is-paused' : ''}" style="--list-color:${escapeHTML(color)}" data-list="${escapeHTML(l.id || '')}" tabindex="0">
+        <h3>${escapeHTML(l.name)}
+          ${paused ? '<span class="badge badge-idle">paused</span>' : `<span class="badge badge-ok">${l.count ?? 0} reminders</span>`}
+        </h3>
+        <p class="list-card-sub"><b>${total} total</b>${l.done ? ` · ${l.done} done` : ''}</p>
+        <div class="row-actions">
+          <button type="button" class="icon-btn" data-open-list aria-label="Open ${escapeHTML(l.name)}">${actionIconSVG('arrow-right')}</button>
+          ${canManage ? `
+            <button type="button" class="icon-btn" data-edit-list="${escapeHTML(l.id)}" aria-label="Rename ${escapeHTML(l.name)}">${actionIconSVG('pencil')}</button>
+            ${paused
+              ? `<button type="button" class="icon-btn" data-resume="${escapeHTML(l.id)}" aria-label="Resume ${escapeHTML(l.name)}">${actionIconSVG('play')}</button>`
+              : `<button type="button" class="icon-btn" data-pause="${escapeHTML(l.id)}" aria-label="Pause ${escapeHTML(l.name)}">${actionIconSVG('pause')}</button>`}
+            <button type="button" class="icon-btn danger" data-delete-list="${escapeHTML(l.id)}" aria-label="Delete ${escapeHTML(l.name)}">${actionIconSVG('trash')}</button>
+          ` : ''}
+        </div>
+      </article>`;
+  }).join('');
+
   const body = lists.length
     ? `<div class="list-cards">${cards}</div>
-       <p class="list-page-footer"><a href="#/reminders" class="btn btn-ghost btn-sm">View all reminders</a></p>`
+       <p class="list-page-footer"><a href="#/reminders" class="btn btn-ghost btn-sm">View all reminders →</a></p>`
     : emptyState(
         'No lists yet',
-        'Create a list to organize reminders.',
-        '<button class="btn btn-primary" data-new-list>Create list</button><a href="#/reminders" class="btn btn-ghost btn-sm">View all reminders</a>'
-      );
+        canManage ? 'Create a list to organize reminders.' : 'Add a reminder with a list to see groups here. Reminders always show under All reminders.',
+        canManage ? '<button class="btn btn-primary" data-new-list>Create list</button>' : '<a href="#/reminders" class="btn btn-primary btn-sm">View all reminders</a>',
+        'list');
 
   const main = `
     <div class="page-header-row">
-      <div class="page-header-text">
+      <div>
         <h1 class="page-title">Lists</h1>
         <p class="page-sub">${countLabel}</p>
       </div>
-      <button class="btn btn-primary btn-sm" data-new-list>+ New list</button>
+      ${canManage ? '<button class="btn btn-primary btn-sm btn-with-icon" data-new-list>' + iconHTML('plus') + '<span class="btn-label">New list</span></button>' : ''}
     </div>
     ${body}
   `;
-  document.getElementById('app').innerHTML = shellHTML('/lists', main);
+  document.getElementById('app').innerHTML = shellHTML('/lists', main, 'Lists');
   bindShell('/lists');
+
+  document.querySelectorAll('.list-card').forEach((card) => {
+    const openCard = (e) => {
+      if (e.target.closest('button')) return;
+      const id = card.dataset.list;
+      if (id && id !== 'unlisted') {
+        state.listFilter = id;
+        state.listFilterName = card.querySelector('h3')?.textContent.split('\n')[0]?.trim() || id;
+      } else {
+        state.listFilter = '';
+      }
+      location.hash = '#/reminders';
+      renderReminders();
+    };
+    card.addEventListener('click', openCard);
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCard(e); }
+    });
+  });
+  document.querySelectorAll('[data-open-list]').forEach((btn) => {
+    btn.addEventListener('click', () => btn.closest('.list-card').click());
+  });
   document.querySelectorAll('[data-new-list]').forEach((btn) => {
-    btn.addEventListener('click', openCreateListModal);
+    btn.addEventListener('click', () => openListModal());
+  });
+  document.querySelectorAll('[data-edit-list]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const l = lists.find((x) => x.id === btn.dataset.editList);
+      if (l) openListModal(l);
+    });
+  });
+  document.querySelectorAll('[data-delete-list]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const l = lists.find((x) => x.id === btn.dataset.deleteList);
+      if (!l) return;
+      const drawer = openDrawer('Delete list', `
+        <p style="margin-top:0">Delete <strong>${escapeHTML(l.name)}</strong>?</p>
+        <p style="color:var(--danger);margin-bottom:0">The list is removed; its reminders stay and simply lose the list.</p>
+      `, `<button class="btn" type="button" data-close-drawer>Cancel</button><button class="btn btn-danger" id="list-del-go">Delete list</button>`);
+      drawer.querySelector('#list-del-go').addEventListener('click', async () => {
+        try {
+          await API.delete(`/api/lists/${l.id}`);
+          closeDrawer();
+          showToast('List deleted');
+          renderLists();
+        } catch (err) {
+          showToast(err.message, 'error');
+        }
+      });
+    });
   });
   document.querySelectorAll('[data-pause]').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -214,848 +326,28 @@ async function renderLists() {
   });
 }
 
-function openCreateListModal() {
-  const drawer = openDrawer('New list', `
-    <div class="field"><label for="list-name">Name</label><input id="list-name" required></div>
-    <div class="field"><label for="list-color">Color</label><input id="list-color" type="color" value="#3b82f6"></div>
-  `, `<button class="btn" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" id="save-list">Create</button>`);
-  drawer.querySelector('[data-close-drawer]').addEventListener('click', closeDrawer);
+// openListModal creates a list, or edits one when passed.
+function openListModal(existing) {
+  const isEdit = !!existing;
+  const drawer = openDrawer(isEdit ? 'Edit list' : 'New list', `
+    <div class="field"><label for="list-name">Name</label><input id="list-name" value="${escapeHTML(existing?.name || '')}" required></div>
+    <div class="field"><label for="list-color">Color</label><input id="list-color" type="color" value="${escapeHTML(existing?.color || '#7cacf8')}"></div>
+  `, `<button class="btn" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" id="save-list">${isEdit ? 'Save' : 'Create'}</button>`);
   drawer.querySelector('#save-list').addEventListener('click', async () => {
     const name = document.getElementById('list-name').value.trim();
     if (!name) return showToast('Name required', 'error');
     try {
-      await API.post('/api/lists', { name, color: document.getElementById('list-color').value });
+      if (isEdit) {
+        await API.patch(`/api/lists/${existing.id}`, { name, color: document.getElementById('list-color').value });
+        showToast('List saved');
+      } else {
+        await API.post('/api/lists', { name, color: document.getElementById('list-color').value });
+        showToast('List created');
+      }
       closeDrawer();
-      showToast('List created');
       renderLists();
     } catch (err) {
       showToast(err.message, 'error');
     }
   });
 }
-
-async function renderDataSettings() {
-  const main = `
-    <h1 class="page-title">Data</h1>
-    <p class="page-sub">Export backups or import reminders</p>
-    <div class="card" style="margin-bottom:16px">
-      <h3>Export</h3>
-      <p class="page-sub">Download your reminders and settings</p>
-      <div class="inline-actions">
-        <a class="btn btn-primary btn-sm" href="${API.url('/api/export/json')}" download>Export JSON</a>
-        <a class="btn btn-sm" href="${API.url('/api/export/ical')}" download>Export iCal</a>
-      </div>
-    </div>
-    <div class="card">
-      <h3>Import</h3>
-      <p class="page-sub">Upload a JSON or iCal backup</p>
-      <div class="field">
-        <label for="import-mode">Mode</label>
-        <select id="import-mode">
-          <option value="merge">Merge (skip existing)</option>
-          <option value="merge_update">Merge & update</option>
-          <option value="replace">Replace all</option>
-        </select>
-      </div>
-      <div class="import-dropzone" id="import-dropzone">
-        <p>Drop a file here or click to browse</p>
-        <input type="file" id="import-file" accept=".json,.ics,.ical" hidden>
-      </div>
-      <pre id="import-preview" class="link-out" hidden></pre>
-      <button class="btn btn-primary" id="import-run" disabled>Import</button>
-    </div>
-    <a href="#/settings" class="btn btn-ghost btn-sm" style="margin-top:16px">← Back to settings</a>
-  `;
-  document.getElementById('app').innerHTML = shellHTML('/settings/data', main);
-  bindShell('/settings/data');
-  let pendingFile = null;
-  const dropzone = document.getElementById('import-dropzone');
-  const fileInput = document.getElementById('import-file');
-  dropzone.addEventListener('click', () => fileInput.click());
-  dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('drag-over'); });
-  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
-  dropzone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    dropzone.classList.remove('drag-over');
-    if (e.dataTransfer.files[0]) handleImportFile(e.dataTransfer.files[0]);
-  });
-  fileInput.addEventListener('change', () => {
-    if (fileInput.files[0]) handleImportFile(fileInput.files[0]);
-  });
-
-  async function handleImportFile(file) {
-    pendingFile = file;
-    document.getElementById('import-run').disabled = false;
-    dropzone.querySelector('p').textContent = file.name;
-    if (file.name.endsWith('.json')) {
-      const text = await file.text();
-      try {
-        const preview = await API.post('/api/import/json/preview', JSON.parse(text));
-        const pre = document.getElementById('import-preview');
-        pre.hidden = false;
-        pre.textContent = JSON.stringify(preview, null, 2);
-      } catch (err) {
-        showToast(err.message, 'error');
-      }
-    }
-  }
-
-  document.getElementById('import-run').addEventListener('click', async () => {
-    if (!pendingFile) return;
-    const mode = document.getElementById('import-mode').value;
-    const form = new FormData();
-    form.append('file', pendingFile);
-    const isJson = pendingFile.name.endsWith('.json');
-    const url = API.url(isJson ? `/api/import/json?mode=${encodeURIComponent(mode)}` : '/api/import/ical');
-    try {
-      const res = await fetch(url, { method: 'POST', credentials: 'include', body: isJson ? await pendingFile.text() : form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'import failed');
-      showToast('Import complete');
-      document.getElementById('import-preview').hidden = false;
-      document.getElementById('import-preview').textContent = JSON.stringify(data, null, 2);
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-}
-
-async function renderTemplateGallery() {
-  const data = await API.get('/api/templates');
-  const templates = data.templates || [];
-  const cards = templates.map((t) => `
-    <article class="card template-card">
-      <h3>${escapeHTML(t.name)}${t.is_system ? ' <span class="badge">System</span>' : ''}</h3>
-      <p class="page-sub">${escapeHTML(t.description || t.title)}</p>
-      <p class="page-sub">Priority: ${escapeHTML(t.priority)} · Offsets: ${(t.offsets || []).join(', ') || 'none'}</p>
-      <button class="btn btn-sm btn-primary" data-use-template="${t.id}">Use template</button>
-    </article>
-  `).join('');
-  const main = `
-    <h1 class="page-title">Templates</h1>
-    <p class="page-sub">Start from a preset reminder pattern</p>
-    <div class="template-grid">${cards || emptyState('No templates', 'Templates will appear here.')}</div>
-    <a href="#/settings" class="btn btn-ghost btn-sm" style="margin-top:16px">← Back to settings</a>
-  `;
-  document.getElementById('app').innerHTML = shellHTML('/settings/templates', main);
-  bindShell('/settings/templates');
-  document.querySelectorAll('[data-use-template]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      try {
-        await API.post(`/api/templates/${btn.dataset.useTemplate}/use`, {});
-        showToast('Reminder created from template');
-        location.hash = '#/reminders';
-        renderApp('/reminders');
-      } catch (err) {
-        showToast(err.message, 'error');
-      }
-    });
-  });
-}
-
-async function renderGoogleSettings() {
-  let data = { connected: false };
-  try {
-    data = await API.get('/api/integrations/google');
-  } catch (err) {
-    showToast(err.message, 'error');
-  }
-  const main = data.connected ? `
-    <h1 class="page-title">Google</h1>
-    <p class="page-sub">Connected as ${escapeHTML(data.email || '')}</p>
-    <div class="card" style="margin-bottom:16px">
-      <label class="checkbox-label"><input type="checkbox" id="g-cal" ${data.calendar_enabled ? 'checked' : ''}> Calendar sync</label>
-      <label class="checkbox-label"><input type="checkbox" id="g-cal-pause" ${data.calendar_paused ? 'checked' : ''}> Pause calendar</label>
-      <label class="checkbox-label"><input type="checkbox" id="g-mail" ${data.gmail_enabled ? 'checked' : ''}> Gmail ingest</label>
-      <label class="checkbox-label"><input type="checkbox" id="g-mail-pause" ${data.gmail_paused ? 'checked' : ''}> Pause Gmail</label>
-      <div class="inline-actions" style="margin-top:12px">
-        <button class="btn btn-primary btn-sm" id="g-save">Save</button>
-        <button class="btn btn-sm" id="g-sync">Sync now</button>
-        <button class="btn btn-danger btn-sm" id="g-disconnect">Disconnect</button>
-      </div>
-    </div>
-    <a href="#/settings" class="btn btn-ghost btn-sm">← Back to settings</a>
-  ` : `
-    <h1 class="page-title">Google</h1>
-    <p class="page-sub">Connect Google Calendar and Gmail</p>
-    <div class="card">
-      <button class="btn btn-primary" id="g-connect">Connect Google account</button>
-    </div>
-    <a href="#/settings" class="btn btn-ghost btn-sm" style="margin-top:16px">← Back to settings</a>
-  `;
-  document.getElementById('app').innerHTML = shellHTML('/settings/google', main);
-  bindShell('/settings/google');
-  document.getElementById('g-connect')?.addEventListener('click', async () => {
-    try {
-      const res = await API.post('/api/integrations/google/connect');
-      if (res.redirect_url) window.location.href = res.redirect_url;
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-  document.getElementById('g-save')?.addEventListener('click', async () => {
-    try {
-      if (document.getElementById('g-cal-pause').checked) {
-        await API.post('/api/integrations/google/calendar/pause');
-      } else {
-        await API.post('/api/integrations/google/calendar/resume');
-      }
-      if (document.getElementById('g-mail-pause').checked) {
-        await API.post('/api/integrations/google/gmail/pause');
-      } else {
-        await API.post('/api/integrations/google/gmail/resume');
-      }
-      showToast('Google settings saved');
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-  document.getElementById('g-sync')?.addEventListener('click', async () => {
-    try {
-      await API.post('/api/integrations/google/sync');
-      showToast('Sync started');
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-  document.getElementById('g-disconnect')?.addEventListener('click', async () => {
-    if (!confirm('Disconnect Google?')) return;
-    try {
-      await API.delete('/api/integrations/google');
-      showToast('Disconnected');
-      renderGoogleSettings();
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-}
-
-async function renderAccountSettings() {
-  let keys = [];
-  let totp = { enabled: false };
-  let hooks = [];
-  let hookEvents = ['reminder.fired', 'reminder.done'];
-  // Read-only status: never call /2fa/setup on page load (it starts enrolment).
-  const [keysRes, totpRes, hooksRes] = await Promise.allSettled([
-    API.get('/api/api-keys'),
-    API.get('/api/me/2fa'),
-    API.get('/api/webhooks'),
-  ]);
-  if (keysRes.status === 'fulfilled') keys = keysRes.value.api_keys || [];
-  if (totpRes.status === 'fulfilled') totp = totpRes.value;
-  if (hooksRes.status === 'fulfilled') {
-    hooks = hooksRes.value.webhooks || [];
-    hookEvents = hooksRes.value.events || hookEvents;
-  }
-  const keyRows = keys.length
-    ? keys.map((k) => `
-        <tr>
-          <td>${escapeHTML(k.name)}</td>
-          <td class="mono-cell">${escapeHTML(k.prefix)}…</td>
-          <td class="mono-cell">${k.last_used_at ? new Date(k.last_used_at).toLocaleString() : '—'}</td>
-          <td><button class="btn btn-sm btn-danger" data-revoke-key="${k.id}">Revoke</button></td>
-        </tr>
-      `).join('')
-    : '<tr><td colspan="4" class="table-empty">No API keys</td></tr>';
-
-  const hookStatus = (h) => {
-    if (!h.enabled) return `<span class="badge badge-paused">Disabled</span>${h.disabled_reason ? `<div class="channel-help">${escapeHTML(h.disabled_reason)}</div>` : ''}`;
-    if (!h.last_delivery_at) return '<span class="badge badge-paused">No deliveries yet</span>';
-    const when = new Date(h.last_delivery_at).toLocaleString();
-    return h.last_error
-      ? `<span class="badge badge-overdue">Failing</span><div class="channel-help">${escapeHTML(h.last_error)} · ${when}</div>`
-      : `<span class="badge badge-done">OK ${h.last_status_code || ''}</span><div class="channel-help">${when}</div>`;
-  };
-  const hookRows = hooks.length
-    ? hooks.map((h) => `
-        <tr>
-          <td class="mono-cell" style="word-break:break-all">${escapeHTML(h.url)}</td>
-          <td>${h.events.map(escapeHTML).join('<br>')}</td>
-          <td>${hookStatus(h)}</td>
-          <td class="inline-actions">
-            <button class="btn btn-sm" data-hook-test="${h.id}">Test</button>
-            <button class="btn btn-sm" data-hook-log="${h.id}">Log</button>
-            <button class="btn btn-sm" data-hook-toggle="${h.id}" data-enabled="${h.enabled}">${h.enabled ? 'Disable' : 'Enable'}</button>
-            <button class="btn btn-sm" data-hook-rotate="${h.id}">New secret</button>
-            <button class="btn btn-sm btn-danger" data-hook-delete="${h.id}">Delete</button>
-          </td>
-        </tr>
-      `).join('')
-    : '<tr><td colspan="4" class="table-empty">No webhooks</td></tr>';
-  const eventChecks = hookEvents.map((e) => `
-      <label class="checkbox-label"><input type="checkbox" name="hook-event" value="${escapeHTML(e)}" checked> ${escapeHTML(e)}</label>
-    `).join('');
-
-  const main = `
-    <h1 class="page-title">Account</h1>
-    <p class="page-sub">API keys, webhooks and two-factor authentication</p>
-    <div class="card" style="margin-bottom:16px">
-      <h3>API keys</h3>
-      <div class="inline-actions">
-        <input id="key-name" placeholder="Key name" aria-label="Key name">
-        <button class="btn btn-primary btn-sm" id="create-key">Create key</button>
-      </div>
-      <pre id="new-key-token" class="link-out" hidden></pre>
-      <div class="table-wrap" style="margin-top:12px">
-        <table class="data-table">
-          <thead><tr><th>Name</th><th>Prefix</th><th>Last used</th><th></th></tr></thead>
-          <tbody>${keyRows}</tbody>
-        </table>
-      </div>
-    </div>
-    <div class="card" style="margin-bottom:16px">
-      <h3>Webhooks</h3>
-      <p class="channel-help">Day Remind POSTs signed JSON to your public HTTPS endpoint when a reminder fires or is marked done.
-        Verify <code>X-DayRemind-Signature: t=&lt;unix&gt;,v1=&lt;hex&gt;</code> as HMAC-SHA256 of <code>&lt;t&gt;.&lt;body&gt;</code> with your secret.
-        Failed deliveries retry for about 3 hours.</p>
-      <div class="field"><label for="hook-url">Endpoint URL</label><input id="hook-url" type="url" placeholder="https://example.com/day-remind" autocomplete="off"></div>
-      <fieldset class="field" style="border:0;padding:0"><legend>Events</legend>${eventChecks}</fieldset>
-      <button class="btn btn-primary btn-sm" id="create-hook">Add webhook</button>
-      <pre id="new-hook-secret" class="link-out" hidden></pre>
-      <div class="table-wrap" style="margin-top:12px">
-        <table class="data-table">
-          <thead><tr><th>URL</th><th>Events</th><th>Status</th><th></th></tr></thead>
-          <tbody>${hookRows}</tbody>
-        </table>
-      </div>
-      <div id="hook-log" hidden style="margin-top:12px"></div>
-    </div>
-    <div class="card">
-      <h3>Two-factor authentication</h3>
-      <p class="page-sub">Protect your account with an authenticator app</p>
-      <div id="totp-setup">
-        <button class="btn btn-sm" id="totp-begin">Set up 2FA</button>
-        <div id="totp-enroll" hidden>
-          <pre id="totp-uri" class="link-out"></pre>
-          <div class="field"><label for="totp-code">Verification code</label><input id="totp-code" inputmode="numeric" autocomplete="one-time-code"></div>
-          <button class="btn btn-primary btn-sm" id="totp-enable">Enable 2FA</button>
-        </div>
-        <div id="totp-disable" hidden>
-          <div class="field"><label for="totp-disable-code">Code to disable</label><input id="totp-disable-code" inputmode="numeric"></div>
-          <button class="btn btn-danger btn-sm" id="totp-disable-btn">Disable 2FA</button>
-        </div>
-      </div>
-    </div>
-    <a href="#/settings" class="btn btn-ghost btn-sm" style="margin-top:16px">← Back to settings</a>
-  `;
-  document.getElementById('app').innerHTML = shellHTML('/settings/account', main);
-  bindShell('/settings/account');
-
-  document.getElementById('create-key')?.addEventListener('click', async () => {
-    const name = document.getElementById('key-name').value.trim() || 'API key';
-    try {
-      const res = await API.post('/api/api-keys', { name });
-      const pre = document.getElementById('new-key-token');
-      pre.hidden = false;
-      pre.textContent = `Copy this token now — it won't be shown again:\n${res.token}`;
-      renderAccountSettings();
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-  document.querySelectorAll('[data-revoke-key]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      if (!confirm('Revoke this API key?')) return;
-      try {
-        await API.delete(`/api/api-keys/${btn.dataset.revokeKey}`);
-        showToast('Key revoked');
-        renderAccountSettings();
-      } catch (err) {
-        showToast(err.message, 'error');
-      }
-    });
-  });
-  if (totp.enabled) {
-    document.getElementById('totp-begin').hidden = true;
-    document.getElementById('totp-disable').hidden = false;
-  }
-
-  const showSecret = (secret, note) => {
-    const pre = document.getElementById('new-hook-secret');
-    pre.hidden = false;
-    pre.textContent = `${note} — copy it now, it won't be shown again:\n${secret}`;
-  };
-  const rerenderKeepingSecret = async () => {
-    const pre = document.getElementById('new-hook-secret');
-    const text = pre && !pre.hidden ? pre.textContent : '';
-    await renderAccountSettings();
-    if (text) showSecret(text.split('\n').slice(1).join('\n'), 'Signing secret');
-  };
-  document.getElementById('create-hook')?.addEventListener('click', async () => {
-    const url = document.getElementById('hook-url').value.trim();
-    const events = [...document.querySelectorAll('input[name="hook-event"]:checked')].map((el) => el.value);
-    try {
-      const res = await API.post('/api/webhooks', { url, events });
-      showSecret(res.secret, 'Signing secret');
-      showToast('Webhook added');
-      await rerenderKeepingSecret();
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-  document.querySelectorAll('[data-hook-test]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      btn.disabled = true;
-      try {
-        const res = await API.post(`/api/webhooks/${btn.dataset.hookTest}/test`);
-        showToast(res.ok ? `Ping delivered (HTTP ${res.status_code})` : `Ping failed: ${res.error}`, res.ok ? undefined : 'error');
-        renderAccountSettings();
-      } catch (err) {
-        showToast(err.message, 'error');
-        btn.disabled = false;
-      }
-    });
-  });
-  document.querySelectorAll('[data-hook-log]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const box = document.getElementById('hook-log');
-      try {
-        const res = await API.get(`/api/webhooks/${btn.dataset.hookLog}/deliveries`);
-        const rows = (res.deliveries || []).map((d) => `
-          <tr>
-            <td>${new Date(d.created_at).toLocaleString()}</td>
-            <td>${escapeHTML(d.event)}</td>
-            <td>${escapeHTML(d.status)}${d.response_code ? ` · ${d.response_code}` : ''}</td>
-            <td>${d.attempt_count}</td>
-            <td>${escapeHTML(d.last_error || '')}${d.next_attempt_at ? ` (retry ${new Date(d.next_attempt_at).toLocaleTimeString()})` : ''}</td>
-          </tr>`).join('') || '<tr><td colspan="5" class="table-empty">No deliveries in the last 30 days</td></tr>';
-        box.hidden = false;
-        box.innerHTML = `<h4>Recent deliveries</h4><div class="table-wrap"><table class="data-table">
-          <thead><tr><th>When</th><th>Event</th><th>Status</th><th>Attempts</th><th>Error</th></tr></thead>
-          <tbody>${rows}</tbody></table></div>`;
-      } catch (err) {
-        showToast(err.message, 'error');
-      }
-    });
-  });
-  document.querySelectorAll('[data-hook-toggle]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      try {
-        await API.patch(`/api/webhooks/${btn.dataset.hookToggle}`, { enabled: btn.dataset.enabled !== 'true' });
-        renderAccountSettings();
-      } catch (err) {
-        showToast(err.message, 'error');
-      }
-    });
-  });
-  document.querySelectorAll('[data-hook-rotate]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      if (!confirm('Generate a new signing secret? The old one stops working immediately.')) return;
-      try {
-        const res = await API.patch(`/api/webhooks/${btn.dataset.hookRotate}`, { rotate_secret: true });
-        showSecret(res.secret, 'New signing secret');
-        await rerenderKeepingSecret();
-      } catch (err) {
-        showToast(err.message, 'error');
-      }
-    });
-  });
-  document.querySelectorAll('[data-hook-delete]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      if (!confirm('Delete this webhook?')) return;
-      try {
-        await API.delete(`/api/webhooks/${btn.dataset.hookDelete}`);
-        showToast('Webhook deleted');
-        renderAccountSettings();
-      } catch (err) {
-        showToast(err.message, 'error');
-      }
-    });
-  });
-
-  document.getElementById('totp-begin')?.addEventListener('click', async () => {
-    try {
-      const res = await API.post('/api/me/2fa/setup');
-      document.getElementById('totp-enroll').hidden = false;
-      document.getElementById('totp-uri').textContent = res.provisioning_uri || res.uri || res.secret;
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-  document.getElementById('totp-enable')?.addEventListener('click', async () => {
-    try {
-      await API.post('/api/me/2fa/enable', { code: document.getElementById('totp-code').value.trim() });
-      showToast('2FA enabled');
-      renderAccountSettings();
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-  document.getElementById('totp-disable-btn')?.addEventListener('click', async () => {
-    try {
-      await API.post('/api/me/2fa/disable', { code: document.getElementById('totp-disable-code').value.trim() });
-      showToast('2FA disabled');
-      renderAccountSettings();
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-}
-
-/* Enhanced Today page using dashboard stats */
-async function renderTodayEnhanced() {
-  let stats = { overdue: 0, today: 0, upcoming_7d: 0, done_count: 0, next_five: [] };
-  try {
-    stats = await API.get('/api/stats/dashboard');
-  } catch {
-    return renderTodayLegacy();
-  }
-  await loadReminders();
-  const now = new Date();
-  const today = state.reminders.filter((r) => {
-    const d = new Date(r.due_at);
-    return d.toDateString() === now.toDateString() && r.status !== 'done' && r.status !== 'cancelled';
-  });
-  const overdue = state.reminders.filter((r) => isOverdue(r));
-  const upcoming = (stats.next_five || []).slice(0, 5);
-
-  const main = `
-    <h1 class="page-title">Today</h1>
-    <p class="page-sub">${now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
-    <div class="stats-row">
-      <div class="stat-card"><strong>${stats.today ?? today.length}</strong><span>Due today</span></div>
-      <div class="stat-card"><strong>${stats.overdue ?? overdue.length}</strong><span>Overdue</span></div>
-      <div class="stat-card"><strong>${stats.upcoming_7d ?? 0}</strong><span>Next 7 days</span></div>
-      <div class="stat-card"><strong>${stats.done_count ?? 0}</strong><span>Done</span></div>
-    </div>
-    ${overdue.length ? `<h2 style="font-size:1rem;color:var(--danger)">Overdue</h2><div class="reminder-list">${overdue.map((r) => reminderCardHTML(r, reminderActions(r))).join('')}</div>` : ''}
-    <h2 style="font-size:1rem;margin-top:24px">Today</h2>
-    <div class="reminder-list" id="today-list">
-      ${today.length ? today.map((r) => reminderCardHTML(r, reminderActions(r))).join('') : emptyState('Nothing scheduled today', 'Tap + to add a reminder.', '<button class="btn btn-primary" id="empty-add">Add reminder</button>')}
-    </div>
-    ${upcoming.length ? `<h2 style="font-size:1rem;margin-top:24px">Upcoming</h2><div class="reminder-list">${upcoming.map((r) => reminderCardHTML(r, reminderActions(r))).join('')}</div>` : ''}
-  `;
-  document.getElementById('app').innerHTML = shellHTML('/today', main);
-  bindShell('/today');
-  bindReminderActions(document.getElementById('app'), () => renderTodayEnhanced());
-  document.getElementById('empty-add')?.addEventListener('click', openCreateDrawerEnhanced);
-}
-
-async function renderTodayLegacy() {
-  await loadReminders();
-  const now = new Date();
-  const today = state.reminders.filter((r) => {
-    const d = new Date(r.due_at);
-    return d.toDateString() === now.toDateString() && r.status !== 'done' && r.status !== 'cancelled';
-  });
-  const overdue = state.reminders.filter((r) => isOverdue(r));
-  const main = `
-    <h1 class="page-title">Today</h1>
-    <p class="page-sub">${now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
-    <div class="reminder-list">${today.map((r) => reminderCardHTML(r, reminderActions(r))).join('')}</div>
-  `;
-  document.getElementById('app').innerHTML = shellHTML('/today', main);
-  bindShell('/today');
-  bindReminderActions(document.getElementById('app'), () => renderTodayLegacy());
-}
-
-async function renderRemindersEnhanced() {
-  const params = new URLSearchParams();
-  if (state.filter !== 'all') params.set('status', state.filter);
-  if (featureState.searchQuery) params.set('q', featureState.searchQuery);
-  if (featureState.listFilter) params.set('list_id', featureState.listFilter);
-  if (featureState.tagFilter) params.set('tag', featureState.tagFilter);
-  if (featureState.priorityFilter) params.set('priority', featureState.priorityFilter);
-  const qs = params.toString() ? `?${params}` : '';
-  await loadReminders(qs);
-  await loadListsAndTags().catch(() => {});
-
-  const chips = ['all', 'scheduled', 'paused', 'done'].map((f) =>
-    `<button class="filter-chip ${state.filter === f ? 'active' : ''}" data-filter="${f}">${reminderFilterLabel(f)}</button>`
-  ).join('');
-  const listOpts = featureState.lists.map((l) =>
-    `<option value="${l.id}" ${featureState.listFilter === l.id ? 'selected' : ''}>${escapeHTML(l.name)}</option>`
-  ).join('');
-  const tagOpts = featureState.tags.map((t) =>
-    `<option value="${t.id}" ${featureState.tagFilter === t.id ? 'selected' : ''}>${escapeHTML(t.name)}</option>`
-  ).join('');
-
-  const main = `
-    <h1 class="page-title">All reminders</h1>
-    <p class="page-sub">${state.reminders.length} items</p>
-    <div class="field" style="margin-bottom:12px">
-      <input id="reminder-search" type="search" placeholder="Search reminders…" value="${escapeHTML(featureState.searchQuery)}">
-    </div>
-    <div class="filter-row">${chips}</div>
-    <div class="admin-filter-grid" style="margin-bottom:16px">
-      <div class="field" style="margin:0"><label for="filter-list">List</label><select id="filter-list"><option value="">All lists</option>${listOpts}</select></div>
-      <div class="field" style="margin:0"><label for="filter-tag">Tag</label><select id="filter-tag"><option value="">All tags</option>${tagOpts}</select></div>
-      <div class="field" style="margin:0"><label for="filter-priority">Priority</label>
-        <select id="filter-priority">
-          <option value="">Any</option>
-          <option value="low" ${featureState.priorityFilter === 'low' ? 'selected' : ''}>Low</option>
-          <option value="normal" ${featureState.priorityFilter === 'normal' ? 'selected' : ''}>Normal</option>
-          <option value="high" ${featureState.priorityFilter === 'high' ? 'selected' : ''}>High</option>
-          <option value="urgent" ${featureState.priorityFilter === 'urgent' ? 'selected' : ''}>Urgent</option>
-        </select>
-      </div>
-    </div>
-    <div class="reminder-list" id="all-list">
-      ${state.reminders.length ? state.reminders.map((r) => reminderCardHTML(r, reminderActions(r))).join('') : emptyState('No reminders', 'Create one to get started.')}
-    </div>
-  `;
-  document.getElementById('app').innerHTML = shellHTML('/reminders', main);
-  bindShell('/reminders');
-  bindReminderActions(document.getElementById('app'), () => renderRemindersEnhanced());
-  document.querySelectorAll('[data-filter]').forEach((chip) => {
-    chip.addEventListener('click', () => {
-      state.filter = chip.dataset.filter;
-      renderRemindersEnhanced();
-    });
-  });
-  let searchTimer;
-  document.getElementById('reminder-search')?.addEventListener('input', (e) => {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => {
-      featureState.searchQuery = e.target.value.trim();
-      renderRemindersEnhanced();
-    }, 300);
-  });
-  document.getElementById('filter-list')?.addEventListener('change', (e) => {
-    featureState.listFilter = e.target.value;
-    renderRemindersEnhanced();
-  });
-  document.getElementById('filter-tag')?.addEventListener('change', (e) => {
-    featureState.tagFilter = e.target.value;
-    renderRemindersEnhanced();
-  });
-  document.getElementById('filter-priority')?.addEventListener('change', (e) => {
-    featureState.priorityFilter = e.target.value;
-    renderRemindersEnhanced();
-  });
-}
-
-async function openCreateDrawerEnhanced() {
-  const [, wordingLib, channelLib] = await Promise.all([
-    loadListsAndTags().catch(() => {}),
-    API.get('/api/me/mail-templates').catch(() => ({ templates: [] })),
-    API.get('/api/me/notification-channels').catch(() => ({ channels: {} })),
-  ]);
-  const defaultDue = new Date();
-  defaultDue.setHours(defaultDue.getHours() + 1, 0, 0, 0);
-  const local = new Date(defaultDue.getTime() - defaultDue.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-  const listOpts = featureState.lists.map((l) => `<option value="${l.id}">${escapeHTML(l.name)}</option>`).join('');
-  const tagChips = featureState.tags.map((t) =>
-    `<label class="tag-chip"><input type="checkbox" name="tags" value="${t.id}"> ${escapeHTML(t.name)}</label>`
-  ).join('');
-  const offsetChips = OFFSET_PRESETS.map((p) =>
-    `<label class="tag-chip"><input type="checkbox" name="offsets" value="${p.minutes}"> ${p.label} before</label>`
-  ).join('');
-  const recurOpts = RECURRENCE_PRESETS.map((p) =>
-    `<option value="${p.value}">${p.label}</option>`
-  ).join('');
-  const templateOpts = (wordingLib.templates || []).map((t) =>
-    `<option value="${escapeAttr(t.id)}">${escapeHTML(t.name)}${t.active ? ' (in use)' : ''}</option>`
-  ).join('');
-  const channelState = channelLib.channels || {};
-  const sendBy = [
-    { id: 'email', label: 'Email' },
-    { id: 'telegram', label: 'Telegram' },
-  ].map((ch) => {
-    const info = channelState[ch.id] || {};
-    const unavailable = info.available === false;
-    const checked = !unavailable && info.enabled !== false && (ch.id === 'email' || info.enabled);
-    return `<label class="tag-chip"><input type="checkbox" name="send-by" value="${ch.id}"${checked ? ' checked' : ''}${unavailable ? ' disabled' : ''}> ${ch.label}</label>`;
-  }).join('');
-
-  const drawer = openDrawer('New reminder', `
-    <div class="field"><label for="r-title">Title</label><input id="r-title" required></div>
-    <div class="field"><label for="r-desc">Description</label><textarea id="r-desc" rows="3"></textarea></div>
-    <div class="field"><label for="r-due">Due</label><input id="r-due" type="datetime-local" value="${local}" required></div>
-    <div class="field"><label for="r-priority">Priority</label>
-      <select id="r-priority"><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option><option value="low">Low</option></select>
-    </div>
-    <div class="field"><label for="r-list">List</label><select id="r-list"><option value="">No list</option>${listOpts}</select></div>
-    ${tagChips ? `<div class="field"><label>Tags</label><div class="chip-row">${tagChips}</div></div>` : ''}
-    <div class="field"><label for="r-recur">Recurrence</label><select id="r-recur">${recurOpts}</select></div>
-    <div class="field"><label for="r-template">Message template</label>
-      <select id="r-template"><option value="">Account default</option>${templateOpts}</select>
-    </div>
-    <div class="field"><label>Send by</label><div class="chip-row">${sendBy}</div></div>
-    <div class="field"><label>Remind before</label><div class="chip-row">${offsetChips}</div></div>
-  `, `<button class="btn" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" id="save-reminder">Save</button>`);
-  drawer.querySelector('[data-close-drawer]').addEventListener('click', closeDrawer);
-  drawer.querySelector('#save-reminder').addEventListener('click', async () => {
-    const title = document.getElementById('r-title').value.trim();
-    const dueLocal = document.getElementById('r-due').value;
-    if (!title || !dueLocal) {
-      showToast('Title and due date required', 'error');
-      return;
-    }
-    const tagIDs = [...drawer.querySelectorAll('input[name="tags"]:checked')].map((el) => el.value);
-    const offsets = [...drawer.querySelectorAll('input[name="offsets"]:checked')].map((el) => ({
-      offset_minutes: parseInt(el.value, 10),
-    }));
-    const recurPreset = document.getElementById('r-recur').value;
-    const listId = document.getElementById('r-list').value;
-    const templateId = document.getElementById('r-template').value;
-    const sendByBoxes = [...drawer.querySelectorAll('input[name="send-by"]')];
-    const selectedChannels = sendByBoxes.filter((el) => el.checked).map((el) => el.value);
-    if (sendByBoxes.some((el) => !el.disabled) && selectedChannels.length === 0) {
-      showToast('Choose at least one way to send', 'error');
-      return;
-    }
-    const body = {
-      title,
-      description: document.getElementById('r-desc').value,
-      due_at: new Date(dueLocal).toISOString(),
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      priority: document.getElementById('r-priority').value,
-      tag_ids: tagIDs,
-      recurrence_rule: buildRecurrenceRule(recurPreset, dueLocal),
-      offsets,
-      channel_overrides: Object.fromEntries(sendByBoxes.filter((el) => !el.disabled).map((el) => [el.value, el.checked])),
-    };
-    if (listId) body.list_id = listId;
-    if (templateId) body.mail_wording_id = templateId;
-    try {
-      await API.post('/api/reminders', body);
-      closeDrawer();
-      showToast('Reminder created');
-      renderApp(location.hash.replace('#', '') || '/today');
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-}
-
-async function openReminderDrawerEnhanced(id) {
-  let reminder;
-  let deliveries = [];
-  let subtasks = [];
-  let comments = [];
-  let wordingLib = { templates: [] };
-  try {
-    [reminder, deliveries, subtasks, comments, wordingLib] = await Promise.all([
-      API.get(`/api/reminders/${id}`),
-      API.get(`/api/reminders/${id}/deliveries`).then((d) => d.deliveries || []).catch(() => []),
-      API.get(`/api/reminders/${id}/subtasks`).then((d) => d.subtasks || []).catch(() => []),
-      API.get(`/api/reminders/${id}/comments`).then((d) => d.comments || []).catch(() => []),
-      API.get('/api/me/mail-templates').catch(() => ({ templates: [] })),
-    ]);
-  } catch (err) {
-    showToast(err.message, 'error');
-    return;
-  }
-  const chosenWording = (wordingLib.templates || []).find((t) => t.id === reminder.mail_wording_id);
-  reminder.mail_wording_name = chosenWording ? chosenWording.name : '';
-  const doneCount = subtasks.filter((s) => s.done).length;
-  const subtaskHTML = subtasks.length
-    ? `<div class="subtask-progress">${doneCount}/${subtasks.length} complete</div>
-       <ul class="subtask-list">${subtasks.map((s) => `
-         <li><label class="checkbox-label"><input type="checkbox" data-subtask="${s.id}" ${s.done ? 'checked' : ''}> ${escapeHTML(s.title)}</label></li>
-       `).join('')}</ul>`
-    : '<p class="page-sub">No subtasks</p>';
-  const commentHTML = comments.length
-    ? `<div class="comment-list">${comments.map((c) => `
-        <div class="comment-item"><div class="comment-body">${escapeHTML(c.body)}</div>
-        <div class="comment-time">${new Date(c.created_at).toLocaleString()}</div></div>
-      `).join('')}</div>`
-    : '<p class="page-sub">No comments yet</p>';
-  const deliveryRows = deliveries.length
-    ? deliveries.map((d) => `
-        <tr><td>${escapeHTML(d.channel)}</td>
-        <td><span class="badge badge-${d.status === 'sent' ? 'done' : d.status === 'failed' ? 'overdue' : 'paused'}">${escapeHTML(d.status)}</span></td>
-        <td class="mono-cell">${d.sent_at ? new Date(d.sent_at).toLocaleString() : new Date(d.created_at).toLocaleString()}</td></tr>
-      `).join('')
-    : '<tr><td colspan="3" class="table-empty">No deliveries yet</td></tr>';
-
-  const drawer = openDrawer(escapeHTML(reminder.title), `
-    <p class="page-sub" style="margin-top:0">${escapeHTML(reminder.description || 'No description')}</p>
-    <dl class="detail-list">
-      <dt>Due</dt><dd>${new Date(reminder.due_at).toLocaleString()}</dd>
-      <dt>Status</dt><dd>${escapeHTML(reminder.status)}</dd>
-      <dt>Priority</dt><dd>${escapeHTML(reminder.priority)}</dd>
-      <dt>Template</dt><dd>${escapeHTML(reminder.mail_wording_name || 'Account default')}</dd>
-      <dt>Send by</dt><dd>${escapeHTML(sendByLabel(reminder.channel_overrides))}</dd>
-    </dl>
-    <h3 style="font-size:1rem;margin:20px 0 8px">Subtasks</h3>
-    ${subtaskHTML}
-    <h3 style="font-size:1rem;margin:20px 0 8px">Comments</h3>
-    ${commentHTML}
-    <div class="field" style="margin-top:8px"><textarea id="new-comment" rows="2" placeholder="Add a comment…"></textarea></div>
-    <button class="btn btn-sm" id="post-comment">Post comment</button>
-    <h3 style="font-size:1rem;margin:20px 0 8px">Delivery log</h3>
-    <div class="table-wrap card" style="padding:0">
-      <table class="data-table"><thead><tr><th>Channel</th><th>Status</th><th>When</th></tr></thead><tbody>${deliveryRows}</tbody></table>
-    </div>
-  `, `<button class="btn" type="button" data-close-drawer>Close</button>`);
-  drawer.querySelector('[data-close-drawer]').addEventListener('click', closeDrawer);
-  drawer.querySelectorAll('[data-subtask]').forEach((input) => {
-    input.addEventListener('change', async () => {
-      try {
-        await API.patch(`/api/reminders/${id}/subtasks/${input.dataset.subtask}`, { done: input.checked });
-      } catch (err) {
-        showToast(err.message, 'error');
-        input.checked = !input.checked;
-      }
-    });
-  });
-  drawer.querySelector('#post-comment')?.addEventListener('click', async () => {
-    const body = document.getElementById('new-comment').value.trim();
-    if (!body) return;
-    try {
-      await API.post(`/api/reminders/${id}/comments`, { body });
-      openReminderDrawerEnhanced(id);
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-}
-
-function renderSettingsEnhanced(route) {
-  if (route === '/settings/vacation') return renderVacationSettings();
-  if (route === '/settings/alerts') return renderAlertSettings();
-  const main = `
-    <h1 class="page-title">Settings</h1>
-    <p class="page-sub">Manage your account and preferences</p>
-    <div class="settings-grid">
-      <div class="card settings-card" data-href="#/settings/vacation">
-        <h3>Vacation & Pause</h3>
-        <p>Pause all notifications or review paused reminders.</p>
-      </div>
-      <div class="card settings-card" data-href="#/settings/alerts">
-        <h3>Alert channels</h3>
-        <p>Email and Telegram addresses for reminder alerts.</p>
-      </div>
-      <div class="card settings-card" data-href="#/settings/wording">
-        <h3>Message wording</h3>
-        <p>Design the email with HTML and CSS, and customize the message.</p>
-      </div>
-      <div class="card settings-card" data-href="#/settings/data">
-        <h3>Data</h3>
-        <p>Export JSON/iCal backups and import reminders.</p>
-      </div>
-      <div class="card settings-card" data-href="#/settings/templates">
-        <h3>Templates</h3>
-        <p>Reminder templates for birthdays, bills, and more.</p>
-      </div>
-      <div class="card settings-card" data-href="#/settings/google">
-        <h3>Google</h3>
-        <p>Connect Calendar and Gmail sync.</p>
-      </div>
-      <div class="card settings-card" data-href="#/settings/account">
-        <h3>Account</h3>
-        <p>API keys, webhooks and two-factor authentication.</p>
-      </div>
-      <div class="card settings-card">
-        <h3>Profile</h3>
-        <p>${escapeHTML(state.user.email)} · ${escapeHTML(state.user.timezone)}</p>
-      </div>
-      ${state.user.is_admin ? `
-      <div class="card settings-card" data-href="#/admin">
-        <h3>Admin panel</h3>
-        <p>Manage users, reminders, and sessions.</p>
-      </div>` : ''}
-    </div>
-  `;
-  document.getElementById('app').innerHTML = shellHTML('/settings', main);
-  bindShell('/settings');
-  document.querySelectorAll('[data-href]').forEach((el) => {
-    el.addEventListener('click', () => { location.hash = el.dataset.href; });
-  });
-}
-
-/* Override drawers used from app.js shell */
-window.openCreateDrawer = openCreateDrawerEnhanced;
-window.openReminderDrawer = openReminderDrawerEnhanced;

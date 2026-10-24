@@ -12,23 +12,17 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
 
-const defaultDatabase = "day_remind"
-
-// hardcodedAdminEmails is the code-only source of admin access.
-// Public signup (CreateUser) NEVER grants admin, even for these emails —
-// they are promoted on startup via EnsureAdminEmails and cannot be
-// demoted or deleted through the API. Edit this list to change admins.
-var hardcodedAdminEmails = []string{
-	"shivamap20@gmail.com",
-}
+const (
+	defaultDatabase = "day_remind"
+	defaultTimezone = "Asia/Kolkata"
+)
 
 type DB struct {
-	client      *mongo.Client
-	db          *mongo.Database
-	adminEmails map[string]struct{}
+	client *mongo.Client
+	db     *mongo.Database
 }
 
-func Open(databaseURL string, adminEmails []string) (*DB, error) {
+func Open(databaseURL string) (*DB, error) {
 	databaseURL = strings.TrimSpace(databaseURL)
 	if databaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
@@ -54,59 +48,7 @@ func Open(databaseURL string, adminEmails []string) (*DB, error) {
 		_ = client.Disconnect(context.Background())
 		return nil, err
 	}
-	mergedAdmins := normalizeAdminEmails(adminEmails)
-	for email := range normalizeAdminEmails(hardcodedAdminEmails) {
-		mergedAdmins[email] = struct{}{}
-	}
-	store := &DB{
-		client:      client,
-		db:          database,
-		adminEmails: mergedAdmins,
-	}
-	if err := store.EnsureAdminEmails(ctx); err != nil {
-		_ = client.Disconnect(context.Background())
-		return nil, err
-	}
-	if err := store.seedSystemTemplates(ctx); err != nil {
-		_ = client.Disconnect(context.Background())
-		return nil, fmt.Errorf("seed system templates: %w", err)
-	}
-	return store, nil
-}
-
-func normalizeAdminEmails(emails []string) map[string]struct{} {
-	out := make(map[string]struct{}, len(emails))
-	for _, email := range emails {
-		email = strings.TrimSpace(strings.ToLower(email))
-		if email != "" {
-			out[email] = struct{}{}
-		}
-	}
-	return out
-}
-
-func (db *DB) isConfiguredAdmin(email string) bool {
-	email = strings.TrimSpace(strings.ToLower(email))
-	if email == "" {
-		return false
-	}
-	_, ok := db.adminEmails[email]
-	return ok
-}
-
-// isHardcodedAdmin reports whether the email is in the code-only admin list.
-// Hardcoded admins cannot be demoted or deleted through the API.
-func isHardcodedAdmin(email string) bool {
-	email = strings.TrimSpace(strings.ToLower(email))
-	if email == "" {
-		return false
-	}
-	for _, admin := range hardcodedAdminEmails {
-		if strings.TrimSpace(strings.ToLower(admin)) == email {
-			return true
-		}
-	}
-	return false
+	return &DB{client: client, db: database}, nil
 }
 
 func databaseName(databaseURL string) (string, error) {

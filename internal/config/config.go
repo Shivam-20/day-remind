@@ -5,46 +5,111 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
-	DatabaseURL                string
-	WebPort                    int
-	SessionKey                 string
-	AdminEmails                []string
-	ResendAPIKey               string
-	EmailFrom                  string
-	SMTPHost                   string
-	SMTPPort                   int
-	SMTPUsername               string
-	SMTPPassword               string
-	SMTPTLSMode                string
-	TelegramBotToken           string
-	TelegramUpdateMode         string
-	TelegramWebhookSecret      string
-	TelegramGatewayURL         string
-	TelegramGatewayAPIToken    string
-	TelegramGatewayInboundMode string
-	GoogleClientID             string
-	GoogleClientSecret         string
-	GoogleRedirectURL          string
-	VAPIDPublic                string
-	VAPIDPrivate               string
-	TwilioAccountSID           string
-	TwilioAuthToken            string
-	TwilioFrom                 string
-	AIProvider                 string
-	GeminiAPIKey               string
-	GeminiModel                string
-	OpenRouterAPIKey           string
-	OpenRouterModel            string
-	WebhookBaseURL             string
-	MaxFreeReminders           int
-	BasePath                   string
-	AuthJWTSecret              string
-	GatewayCookie              string
-	JWTIssuer                  string
-	TrustAuthHeaders           bool
+	DatabaseURL string
+	WebPort     int
+	SessionKey  string
+	// SMTP holds outbound email settings. Email delivery is enabled only when
+	// Host and From are both set.
+	SMTP SMTPConfig
+	// TelegramBotToken enables the Telegram channel and the command bot.
+	TelegramBotToken string
+	// TelegramAPIBase is overridable so tests can point at a local stub
+	// instead of the real Telegram API.
+	TelegramAPIBase string
+	// SchedulerInterval is how often due reminders are swept.
+	SchedulerInterval time.Duration
+	// AllowPrivateSMTP permits a user-supplied mail server on a loopback or
+	// private address. Off by default, because it otherwise lets any user make
+	// this process connect to an internal service. Development against the
+	// MailHog container needs it on.
+	AllowPrivateSMTP bool
+
+	// AdminEmails is the bootstrap allowlist. A user whose email appears here
+	// is promoted to admin on their next signup or login, which keeps the role
+	// grantable only by whoever controls the server environment.
+	AdminEmails map[string]bool
+	// AppBasePath is the URL prefix when the app is reverse-proxied (e.g. /remind).
+	// Injected into index.html as <base href="…"> for assets and API path resolution.
+	AppBasePath string
+}
+
+// IsAdminEmail reports whether the address is pinned to admin by configuration.
+// A pinned admin cannot be demoted from the UI, since the next login would
+// simply restore the role.
+func (c Config) IsAdminEmail(email string) bool {
+	return c.AdminEmails[strings.TrimSpace(strings.ToLower(email))]
+}
+
+type SMTPConfig struct {
+	Host     string
+	Port     int
+	Username string
+	Password string
+	From     string
+	// TLS selects the transport: "starttls" (default, port 587),
+	// "implicit" (SMTPS, port 465) or "none" for a local catcher like MailHog.
+	TLS string
+}
+
+// Enabled reports whether enough is configured to attempt email delivery.
+func (c SMTPConfig) Enabled() bool {
+	return c.Host != "" && c.From != ""
+}
+
+func (c Config) TelegramEnabled() bool {
+	return c.TelegramBotToken != ""
+}
+
+func loadSMTP() (SMTPConfig, error) {
+	c := SMTPConfig{
+		Host:     strings.TrimSpace(os.Getenv("SMTP_HOST")),
+		Username: os.Getenv("SMTP_USERNAME"),
+		Password: os.Getenv("SMTP_PASSWORD"),
+		From:     strings.TrimSpace(os.Getenv("SMTP_FROM")),
+		TLS:      strings.ToLower(strings.TrimSpace(os.Getenv("SMTP_TLS"))),
+		Port:     587,
+	}
+	if raw := strings.TrimSpace(os.Getenv("SMTP_PORT")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 65535 {
+			return SMTPConfig{}, fmt.Errorf("invalid SMTP_PORT: %q", raw)
+		}
+		c.Port = n
+	}
+	if c.TLS == "" {
+		c.TLS = "starttls"
+	}
+	switch c.TLS {
+	case "starttls", "implicit", "none":
+	default:
+		return SMTPConfig{}, fmt.Errorf("invalid SMTP_TLS: %q (want starttls, implicit or none)", c.TLS)
+	}
+	if c.Host != "" && c.From == "" {
+		return SMTPConfig{}, fmt.Errorf("SMTP_FROM is required when SMTP_HOST is set")
+	}
+	return c, nil
+}
+
+func truthy(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+func parseAdminEmails(raw string) map[string]bool {
+	out := map[string]bool{}
+	for _, part := range strings.Split(raw, ",") {
+		if e := strings.TrimSpace(strings.ToLower(part)); e != "" {
+			out[e] = true
+		}
+	}
+	return out
 }
 
 func Load() (Config, error) {
@@ -64,112 +129,37 @@ func Load() (Config, error) {
 		}
 		port = n
 	}
-	maxFree := 50
-	if raw := strings.TrimSpace(os.Getenv("MAX_FREE_REMINDERS")); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 {
-			return Config{}, fmt.Errorf("invalid MAX_FREE_REMINDERS: %q", raw)
+	smtpCfg, err := loadSMTP()
+	if err != nil {
+		return Config{}, err
+	}
+	interval := 30 * time.Second
+	if raw := strings.TrimSpace(os.Getenv("SCHEDULER_INTERVAL")); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil || d < time.Second {
+			return Config{}, fmt.Errorf("invalid SCHEDULER_INTERVAL: %q (e.g. 30s)", raw)
 		}
-		maxFree = n
+		interval = d
 	}
-	smtpPort := 587
-	if raw := strings.TrimSpace(os.Getenv("SMTP_PORT")); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 || n > 65535 {
-			return Config{}, fmt.Errorf("invalid SMTP_PORT: %q", raw)
-		}
-		smtpPort = n
+	apiBase := strings.TrimRight(strings.TrimSpace(os.Getenv("TELEGRAM_API_BASE")), "/")
+	if apiBase == "" {
+		apiBase = "https://api.telegram.org"
 	}
-	tgMode := strings.ToLower(strings.TrimSpace(os.Getenv("TELEGRAM_UPDATE_MODE")))
-	switch tgMode {
-	case "", "polling":
-		tgMode = "polling"
-	case "webhook", "off":
-	default:
-		return Config{}, fmt.Errorf("invalid TELEGRAM_UPDATE_MODE: %q", tgMode)
-	}
-	gatewayCookie := strings.TrimSpace(os.Getenv("GATEWAY_COOKIE"))
-	if gatewayCookie == "" {
-		gatewayCookie = "auth_token"
-	}
-	jwtIssuer := strings.TrimSpace(os.Getenv("JWT_ISSUER"))
-	if jwtIssuer == "" {
-		jwtIssuer = "home"
+	appBase := strings.TrimSpace(os.Getenv("APP_BASE_PATH"))
+	appBase = strings.TrimRight(appBase, "/")
+	if appBase == "/" {
+		appBase = ""
 	}
 	return Config{
-		DatabaseURL:                dbURL,
-		WebPort:                    port,
-		SessionKey:                 sessionKey,
-		AdminEmails:                parseList(os.Getenv("ADMIN_EMAILS")),
-		ResendAPIKey:               strings.TrimSpace(os.Getenv("RESEND_API_KEY")),
-		EmailFrom:                  strings.TrimSpace(os.Getenv("EMAIL_FROM")),
-		SMTPHost:                   strings.TrimSpace(os.Getenv("SMTP_HOST")),
-		SMTPPort:                   smtpPort,
-		SMTPUsername:               strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
-		SMTPPassword:               strings.TrimSpace(os.Getenv("SMTP_PASSWORD")),
-		SMTPTLSMode:                strings.TrimSpace(os.Getenv("SMTP_TLS")),
-		TelegramBotToken:           strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
-		TelegramUpdateMode:         tgMode,
-		TelegramWebhookSecret:      strings.TrimSpace(os.Getenv("TELEGRAM_WEBHOOK_SECRET")),
-		TelegramGatewayURL:         strings.TrimSpace(os.Getenv("TELEGRAM_GATEWAY_URL")),
-		TelegramGatewayAPIToken:    strings.TrimSpace(os.Getenv("TELEGRAM_GATEWAY_API_TOKEN")),
-		TelegramGatewayInboundMode: normalizeGatewayInboundMode(strings.TrimSpace(os.Getenv("TELEGRAM_GATEWAY_INBOUND_MODE"))),
-		GoogleClientID:             strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")),
-		GoogleClientSecret:         strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET")),
-		GoogleRedirectURL:          strings.TrimSpace(os.Getenv("GOOGLE_REDIRECT_URL")),
-		VAPIDPublic:                strings.TrimSpace(os.Getenv("VAPID_PUBLIC_KEY")),
-		VAPIDPrivate:               strings.TrimSpace(os.Getenv("VAPID_PRIVATE_KEY")),
-		TwilioAccountSID:           strings.TrimSpace(os.Getenv("TWILIO_ACCOUNT_SID")),
-		TwilioAuthToken:            strings.TrimSpace(os.Getenv("TWILIO_AUTH_TOKEN")),
-		TwilioFrom:                 strings.TrimSpace(os.Getenv("TWILIO_FROM")),
-		AIProvider:                 strings.ToLower(strings.TrimSpace(os.Getenv("AI_PROVIDER"))),
-		GeminiAPIKey:               strings.TrimSpace(os.Getenv("GEMINI_API_KEY")),
-		GeminiModel:                firstNonEmptyEnv("GEMINI_MODEL", "gemini-2.5-flash"),
-		OpenRouterAPIKey:           strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")),
-		OpenRouterModel:            firstNonEmptyEnv("OPENROUTER_MODEL", "google/gemini-2.5-flash"),
-		WebhookBaseURL:             strings.TrimSpace(os.Getenv("WEBHOOK_BASE_URL")),
-		MaxFreeReminders:           maxFree,
-		BasePath:                   strings.Trim(os.Getenv("APP_BASE_PATH"), "/"),
-		AuthJWTSecret:              strings.TrimSpace(os.Getenv("AUTH_JWT_SECRET")),
-		GatewayCookie:              gatewayCookie,
-		JWTIssuer:                  jwtIssuer,
-		TrustAuthHeaders:           strings.EqualFold(strings.TrimSpace(os.Getenv("TRUST_AUTH_HEADERS")), "true"),
+		DatabaseURL:       dbURL,
+		WebPort:           port,
+		SessionKey:        sessionKey,
+		AppBasePath:       appBase,
+		SMTP:              smtpCfg,
+		TelegramBotToken:  strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
+		TelegramAPIBase:   apiBase,
+		SchedulerInterval: interval,
+		AllowPrivateSMTP:  truthy(os.Getenv("ALLOW_PRIVATE_SMTP")),
+		AdminEmails:       parseAdminEmails(os.Getenv("ADMIN_EMAILS")),
 	}, nil
 }
-
-func parseList(raw string) []string {
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			out = append(out, part)
-		}
-	}
-	return out
-}
-
-// firstNonEmptyEnv returns the trimmed env value, or fallback when unset/empty.
-func firstNonEmptyEnv(key, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
-	}
-	return fallback
-}
-
-// normalizeGatewayInboundMode validates the TELEGRAM_GATEWAY_INBOUND_MODE env value.
-// Accepted values: "poll" (default), "webhook", "both".
-func normalizeGatewayInboundMode(mode string) string {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "webhook", "both":
-		return strings.ToLower(strings.TrimSpace(mode))
-	default:
-		return "poll"
-	}
-}
-
-// HasTelegramGateway reports whether the Telegram gateway is configured via env.
-func (c Config) HasTelegramGateway() bool {
-	return strings.TrimSpace(c.TelegramGatewayURL) != "" && strings.TrimSpace(c.TelegramGatewayAPIToken) != ""
-}
-

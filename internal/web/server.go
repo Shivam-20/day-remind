@@ -1,9 +1,9 @@
 package web
 
 import (
-	"context"
 	"embed"
 	"fmt"
+	"html"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -12,24 +12,26 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/shivam-20/day-remind/internal/config"
+	"github.com/shivam-20/day-remind/internal/delivery"
+	"github.com/shivam-20/day-remind/internal/secret"
 	"github.com/shivam-20/day-remind/internal/storage"
-	"github.com/shivam-20/day-remind/internal/webhook"
 )
 
 //go:embed all:static
 var staticFiles embed.FS
 
 type Server struct {
-	cfg   config.Config
-	db    *storage.DB
-	hooks *webhook.Dispatcher
+	cfg config.Config
+	db  *storage.DB
+	// resolver is the same one the scheduler uses, so a test notification
+	// exercises exactly the real delivery path.
+	resolver *delivery.Resolver
+	// box encrypts credentials on their way into the database.
+	box *secret.Box
 }
 
-// SetWebhooks enables outbound user webhooks (reminder.done, test pings).
-func (s *Server) SetWebhooks(d *webhook.Dispatcher) { s.hooks = d }
-
-func New(cfg config.Config, db *storage.DB) *Server {
-	return &Server{cfg: cfg, db: db}
+func New(cfg config.Config, db *storage.DB, resolver *delivery.Resolver, box *secret.Box) *Server {
+	return &Server{cfg: cfg, db: db, resolver: resolver, box: box}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -37,7 +39,7 @@ func (s *Server) Handler() http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
-	r.Use(requestTimeout)
+	r.Use(middleware.Timeout(60 * time.Second))
 
 	r.Get("/api/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -46,32 +48,43 @@ func (s *Server) Handler() http.Handler {
 	r.Post("/api/auth/signup", s.handleSignup)
 	r.Post("/api/auth/login", s.handleLogin)
 	r.Post("/api/auth/logout", s.handleLogout)
-	r.Post("/api/auth/forgot-password", s.handleForgotPassword)
-	r.Post("/api/auth/reset-password", s.handleResetPassword)
-	r.Post("/api/auth/verify-email", s.handleVerifyEmail)
-	r.Post("/api/webhooks/telegram", s.handleTelegramWebhook)
-	r.Post("/api/webhooks/email-ingest", s.handleEmailIngest)
-	r.Post("/api/webhooks/email-ingest/{token}", s.handleEmailIngest)
 
 	r.Group(func(pr chi.Router) {
 		pr.Use(s.requireSession)
 		pr.Get("/api/me", s.handleMe)
-		pr.Post("/api/auth/verify-email/resend", s.handleResendVerification)
+		pr.Patch("/api/me", s.handleUpdateMe)
+		pr.Post("/api/me/password", s.handleChangePassword)
+		pr.Get("/api/export/json", s.handleExportJSON)
+		pr.Get("/api/export/ical", s.handleExportICal)
 		pr.Post("/api/me/notifications/pause", s.handlePauseNotifications)
 		pr.Post("/api/me/notifications/resume", s.handleResumeNotifications)
-		pr.Get("/api/me/notification-channels", s.handleGetNotificationChannels)
-		pr.Patch("/api/me/notification-channels", s.handleUpdateNotificationChannels)
-		pr.Post("/api/me/telegram/link", s.handleTelegramLink)
-		pr.Patch("/api/me/digest-settings", s.handleUpdateDigestSettings)
-		pr.Get("/api/me/email-ingest", s.handleGetEmailIngestAddress)
-		pr.Post("/api/me/2fa/setup", s.handleTOTPSetup)
-		pr.Post("/api/me/2fa/enable", s.handleTOTPEnable)
-		pr.Post("/api/me/2fa/disable", s.handleTOTPDisable)
 
-		pr.Get("/api/notifications", s.handleListNotifications)
-		pr.Get("/api/snooze/presets", s.handleSnoozePresets)
-		pr.Get("/api/stats/dashboard", s.handleDashboardStats)
-		pr.Get("/api/calendar", s.handleCalendar)
+		pr.Get("/api/me/notify", s.handleGetNotifySettings)
+		pr.Patch("/api/me/notify", s.handleUpdateNotifySettings)
+		pr.Post("/api/me/notify/test", s.handleSendTestNotification)
+		pr.Post("/api/me/telegram/link-code", s.handleTelegramLinkCode)
+		pr.Post("/api/me/telegram/unlink", s.handleTelegramUnlink)
+		pr.Patch("/api/me/notify/smtp", s.handleUpdateOwnSMTP)
+		pr.Patch("/api/me/notify/telegram", s.handleUpdateOwnTelegram)
+		pr.Post("/api/me/notify/telegram/discover", s.handleDiscoverOwnTelegramChat)
+		pr.Get("/api/me/templates", s.handleGetOwnTemplates)
+		pr.Put("/api/me/templates", s.handleUpdateOwnTemplates)
+		pr.Post("/api/me/templates/preview", s.handleTemplatePreview)
+		pr.Get("/api/me/mail-templates", s.handleListOwnMailTemplates)
+		pr.Post("/api/me/mail-templates", s.handleCreateOwnMailTemplate)
+		pr.Put("/api/me/mail-templates/{id}", s.handleUpdateOwnMailTemplate)
+		pr.Delete("/api/me/mail-templates/{id}", s.handleDeleteOwnMailTemplate)
+		pr.Post("/api/me/mail-templates/{id}/use", s.handleUseOwnMailTemplate)
+
+		pr.Get("/api/reminders", s.handleListReminders)
+		pr.Post("/api/reminders", s.handleCreateReminder)
+		pr.Get("/api/reminders/{id}", s.handleGetReminder)
+		pr.Patch("/api/reminders/{id}", s.handleUpdateReminder)
+		pr.Delete("/api/reminders/{id}", s.handleDeleteReminder)
+		pr.Post("/api/reminders/{id}/done", s.handleDoneReminder)
+		pr.Post("/api/reminders/{id}/pause", s.handlePauseReminder)
+		pr.Post("/api/reminders/{id}/resume", s.handleResumeReminder)
+		pr.Post("/api/reminders/{id}/snooze", s.handleSnoozeReminder)
 
 		pr.Get("/api/lists", s.handleListLists)
 		pr.Post("/api/lists", s.handleCreateList)
@@ -80,84 +93,10 @@ func (s *Server) Handler() http.Handler {
 		pr.Delete("/api/lists/{id}", s.handleDeleteList)
 		pr.Post("/api/lists/{id}/pause", s.handlePauseList)
 		pr.Post("/api/lists/{id}/resume", s.handleResumeList)
-
 		pr.Get("/api/tags", s.handleListTags)
 		pr.Post("/api/tags", s.handleCreateTag)
 		pr.Patch("/api/tags/{id}", s.handleUpdateTag)
 		pr.Delete("/api/tags/{id}", s.handleDeleteTag)
-
-		pr.Get("/api/me/mail-wordings", s.handleListMailWordings)
-		pr.Post("/api/me/mail-wordings", s.handleCreateMailWording)
-		pr.Post("/api/me/mail-wordings/preview", s.handlePreviewMailWording)
-		pr.Post("/api/me/mail-wordings/generate", s.handleGenerateMailWording)
-		pr.Put("/api/me/mail-wordings/{id}", s.handleUpdateMailWording)
-		pr.Delete("/api/me/mail-wordings/{id}", s.handleDeleteMailWording)
-		pr.Post("/api/me/mail-wordings/{id}/use", s.handleUseMailWording)
-		pr.Get("/api/me/mail-templates", s.handleListMailWordings)
-		pr.Post("/api/me/mail-templates", s.handleCreateMailWording)
-		pr.Put("/api/me/mail-templates/{id}", s.handleUpdateMailWording)
-		pr.Delete("/api/me/mail-templates/{id}", s.handleDeleteMailWording)
-		pr.Post("/api/me/mail-templates/{id}/use", s.handleUseMailWording)
-		pr.Post("/api/me/templates/preview", s.handlePreviewMailWording)
-
-		pr.Get("/api/templates", s.handleListTemplates)
-		pr.Post("/api/templates", s.handleCreateTemplate)
-		pr.Post("/api/templates/{id}/use", s.handleUseTemplate)
-
-		pr.Get("/api/groups", s.handleListGroups)
-		pr.Post("/api/groups", s.handleCreateGroup)
-		pr.Get("/api/groups/{id}", s.handleGetGroup)
-		pr.Patch("/api/groups/{id}", s.handleUpdateGroup)
-		pr.Delete("/api/groups/{id}", s.handleDeleteGroup)
-		pr.Post("/api/groups/{id}/invite", s.handleInviteGroupMember)
-
-		pr.Get("/api/api-keys", s.handleListAPIKeys)
-		pr.Post("/api/api-keys", s.handleCreateAPIKey)
-		pr.Delete("/api/api-keys/{id}", s.handleRevokeAPIKey)
-
-		pr.Get("/api/webhooks", s.handleListWebhooks)
-		pr.Post("/api/webhooks", s.handleCreateWebhook)
-		pr.Get("/api/webhooks/{id}", s.handleGetWebhook)
-		pr.Patch("/api/webhooks/{id}", s.handleUpdateWebhook)
-		pr.Delete("/api/webhooks/{id}", s.handleDeleteWebhook)
-		pr.Post("/api/webhooks/{id}/test", s.handleTestWebhook)
-		pr.Get("/api/webhooks/{id}/deliveries", s.handleListWebhookDeliveries)
-		pr.Get("/api/me/2fa", s.handleTOTPStatus)
-
-		pr.Get("/api/export/json", s.handleExportJSON)
-		pr.Get("/api/export/ical", s.handleExportICal)
-		pr.Post("/api/import/json/preview", s.handleImportJSONPreview)
-		pr.Post("/api/import/json", s.handleImportJSON)
-		pr.Post("/api/import/csv", s.handleImportCSV)
-		pr.Post("/api/import/ical", s.handleImportICal)
-
-		pr.Get("/api/integrations/google", s.handleGetGoogleIntegration)
-		pr.Post("/api/integrations/google/connect", s.handleGoogleConnect)
-		pr.Get("/api/integrations/google/callback", s.handleGoogleCallback)
-		pr.Delete("/api/integrations/google", s.handleGoogleDisconnect)
-		pr.Post("/api/integrations/google/sync", s.handleGoogleSync)
-		pr.Post("/api/integrations/google/calendar/pause", s.handleGoogleCalendarPause)
-		pr.Post("/api/integrations/google/calendar/resume", s.handleGoogleCalendarResume)
-		pr.Post("/api/integrations/google/gmail/pause", s.handleGoogleGmailPause)
-		pr.Post("/api/integrations/google/gmail/resume", s.handleGoogleGmailResume)
-		pr.Get("/api/integrations/google/gmail/settings", s.handleGetGmailSettings)
-		pr.Put("/api/integrations/google/gmail/settings", s.handleUpdateGmailSettings)
-
-		pr.Post("/api/push/subscribe", s.handlePushSubscribe)
-		pr.Post("/api/reminders/parse", s.handleParseReminder)
-
-		pr.Get("/api/reminders", s.handleListReminders)
-		pr.Post("/api/reminders", s.handleCreateReminder)
-		pr.Get("/api/reminders/{id}", s.handleGetReminder)
-		pr.Get("/api/reminders/{id}/deliveries", s.handleListReminderDeliveries)
-		pr.Patch("/api/reminders/{id}", s.handleUpdateReminder)
-		pr.Delete("/api/reminders/{id}", s.handleDeleteReminder)
-		pr.Post("/api/reminders/{id}/done", s.handleDoneReminder)
-		pr.Post("/api/reminders/{id}/pause", s.handlePauseReminder)
-		pr.Post("/api/reminders/{id}/resume", s.handleResumeReminder)
-		pr.Post("/api/reminders/{id}/snooze", s.handleSnoozeReminder)
-		pr.Post("/api/reminders/{id}/share", s.handleCreateShare)
-		pr.Get("/api/reminders/{id}/shares", s.handleListShares)
 		pr.Get("/api/reminders/{id}/comments", s.handleListComments)
 		pr.Post("/api/reminders/{id}/comments", s.handleCreateComment)
 		pr.Get("/api/reminders/{id}/subtasks", s.handleListSubtasks)
@@ -166,57 +105,28 @@ func (s *Server) Handler() http.Handler {
 		pr.Patch("/api/reminders/{id}/subtasks/{subId}", s.handleUpdateSubtask)
 		pr.Delete("/api/reminders/{id}/subtasks/{subId}", s.handleDeleteSubtask)
 
-		pr.Post("/api/shares/{id}/accept", s.handleAcceptShare)
-	})
+		pr.Group(func(ar chi.Router) {
+			ar.Use(s.requireAdmin)
+			ar.Get("/api/admin/stats", s.handleAdminStats)
+			ar.Get("/api/admin/users", s.handleAdminListUsers)
+			ar.Post("/api/admin/users/{id}/role", s.handleAdminSetRole)
+			ar.Delete("/api/admin/users/{id}", s.handleAdminDeleteUser)
+			ar.Post("/api/admin/users/{id}/notifications/pause", s.handleAdminPauseUser)
+			ar.Post("/api/admin/users/{id}/notifications/resume", s.handleAdminResumeUser)
 
-	r.Route("/api/v1", func(v1 chi.Router) {
-		v1.Use(s.requireAPIKey)
-		v1.Get("/reminders", s.handleListReminders)
-		v1.Post("/reminders", s.handleCreateReminder)
-		v1.Get("/reminders/{id}", s.handleGetReminder)
-		v1.Patch("/reminders/{id}", s.handleUpdateReminder)
-		v1.Delete("/reminders/{id}", s.handleDeleteReminder)
-		v1.Post("/reminders/{id}/done", s.handleDoneReminder)
-		v1.Post("/reminders/{id}/pause", s.handlePauseReminder)
-		v1.Post("/reminders/{id}/resume", s.handleResumeReminder)
-		v1.Post("/reminders/{id}/snooze", s.handleSnoozeReminder)
-	})
-
-	r.Group(func(ar chi.Router) {
-		ar.Use(s.requireSession)
-		ar.Use(s.requireAdmin)
-
-		ar.Get("/api/admin/stats", s.handleAdminStats)
-
-		ar.Get("/api/admin/settings/delivery", s.handleAdminGetDeliverySettings)
-		ar.Patch("/api/admin/settings/delivery", s.handleAdminUpdateDeliverySettings)
-		ar.Post("/api/admin/settings/delivery/test", s.handleAdminTestDelivery)
-		ar.Get("/api/admin/settings/openrouter/models", s.handleAdminListOpenRouterModels)
-		ar.Post("/api/admin/settings/ai/test", s.handleAdminTestAI)
-
-		ar.Get("/api/admin/users", s.handleAdminListUsers)
-		ar.Post("/api/admin/users", s.handleAdminCreateUser)
-		ar.Get("/api/admin/users/{id}", s.handleAdminGetUser)
-		ar.Patch("/api/admin/users/{id}", s.handleAdminUpdateUser)
-		ar.Delete("/api/admin/users/{id}", s.handleAdminDeleteUser)
-		ar.Delete("/api/admin/users/{id}/sessions", s.handleAdminRevokeUserSessions)
-
-		ar.Get("/api/admin/reminders", s.handleAdminListReminders)
-		ar.Post("/api/admin/reminders", s.handleAdminCreateReminder)
-		ar.Get("/api/admin/reminders/{id}", s.handleAdminGetReminder)
-		ar.Patch("/api/admin/reminders/{id}", s.handleAdminUpdateReminder)
-		ar.Delete("/api/admin/reminders/{id}", s.handleAdminDeleteReminder)
-		ar.Post("/api/admin/reminders/{id}/done", s.handleAdminDoneReminder)
-		ar.Post("/api/admin/reminders/{id}/pause", s.handleAdminPauseReminder)
-		ar.Post("/api/admin/reminders/{id}/resume", s.handleAdminResumeReminder)
-		ar.Post("/api/admin/reminders/{id}/snooze", s.handleAdminSnoozeReminder)
-
-		ar.Get("/api/admin/telegram/users", s.handleAdminListTelegramUsers)
-		ar.Post("/api/admin/telegram/users/{id}/unlink", s.handleAdminUnlinkTelegram)
-		ar.Post("/api/admin/telegram/users/{id}/message", s.handleAdminMessageTelegram)
-		ar.Get("/api/admin/telegram/status", s.handleAdminTelegramStatus)
-		ar.Post("/api/admin/telegram/webhook", s.handleAdminRegisterTelegramWebhook)
-		ar.Delete("/api/admin/telegram/webhook", s.handleAdminDeleteTelegramWebhook)
+			ar.Get("/api/admin/settings", s.handleAdminGetSettings)
+			ar.Patch("/api/admin/settings", s.handleAdminUpdateSettings)
+			ar.Post("/api/admin/settings/test", s.handleAdminTestSettings)
+			ar.Put("/api/admin/templates", s.handleAdminUpdateTemplates)
+			ar.Post("/api/admin/templates/reset", s.handleAdminResetTemplates)
+			ar.Post("/api/admin/templates/preview", s.handleTemplatePreview)
+			ar.Get("/api/admin/mail-templates", s.handleListAdminMailTemplates)
+			ar.Post("/api/admin/mail-templates", s.handleCreateAdminMailTemplate)
+			ar.Put("/api/admin/mail-templates/{id}", s.handleUpdateAdminMailTemplate)
+			ar.Delete("/api/admin/mail-templates/{id}", s.handleDeleteAdminMailTemplate)
+			ar.Post("/api/admin/mail-templates/{id}/use", s.handleUseAdminMailTemplate)
+			ar.Get("/api/admin/deliveries", s.handleAdminDeliveryLog)
+		})
 	})
 
 	staticFS, err := fs.Sub(staticFiles, "static")
@@ -224,7 +134,10 @@ func (s *Server) Handler() http.Handler {
 		panic(err)
 	}
 	fileServer := http.FileServer(http.FS(staticFS))
-	r.Handle("/static/*", http.StripPrefix("/static/", fileServer))
+	r.Handle("/static/*", http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		fileServer.ServeHTTP(w, r)
+	})))
 	r.Get("/", s.serveIndex)
 	r.Get("/portal", s.serveIndex)
 	r.NotFound(s.serveIndex)
@@ -242,39 +155,34 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing index", http.StatusInternalServerError)
 		return
 	}
-	if s.cfg.BasePath != "" {
-		base := "/" + s.cfg.BasePath + "/"
-		b = []byte(strings.Replace(string(b), "<head>", "<head><base href=\""+base+"\">", 1))
+	htmlDoc := string(b)
+	if base := strings.TrimSpace(s.cfg.AppBasePath); base != "" {
+		if !strings.HasPrefix(base, "/") {
+			base = "/" + base
+		}
+		base = strings.TrimRight(base, "/") + "/"
+		tag := fmt.Sprintf("<base href=\"%s\">", html.EscapeString(base))
+		if strings.Contains(htmlDoc, "<head>") {
+			htmlDoc = strings.Replace(htmlDoc, "<head>", "<head>\n  "+tag, 1)
+		}
 	}
+	b = []byte(htmlDoc)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 	_, _ = w.Write(b)
 }
 
-// requestTimeout cancels the request context. AI routes get longer than the
-// default because model catalogs and wording generation often exceed 60s.
-func requestTimeout(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		limit := 60 * time.Second
-		path := r.URL.Path
-		if strings.Contains(path, "/mail-wordings/generate") ||
-			strings.Contains(path, "/settings/ai/test") ||
-			strings.Contains(path, "/openrouter/models") {
-			limit = 3 * time.Minute
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), limit)
-		defer cancel()
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-func (s *Server) ListenAndServe() error {
-	addr := fmt.Sprintf(":%d", s.cfg.WebPort)
-	srv := &http.Server{
-		Addr:              addr,
+// HTTPServer builds the configured server without starting it, so main can
+// own the lifecycle and shut it down gracefully.
+func (s *Server) HTTPServer() *http.Server {
+	return &http.Server{
+		Addr:              fmt.Sprintf(":%d", s.cfg.WebPort),
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	fmt.Printf("day-remind listening on http://localhost%s\n", addr)
-	return srv.ListenAndServe()
+}
+
+// ListenAndServe is retained for callers that do not need graceful shutdown.
+func (s *Server) ListenAndServe() error {
+	return s.HTTPServer().ListenAndServe()
 }

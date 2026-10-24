@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -14,141 +15,96 @@ import (
 )
 
 type reminderDoc struct {
-	ID                 uuid.UUID       `bson:"_id"`
-	UserID             uuid.UUID       `bson:"user_id"`
-	ListID             *uuid.UUID      `bson:"list_id,omitempty"`
-	MailWordingID      *uuid.UUID      `bson:"mail_wording_id,omitempty"`
-	Title              string          `bson:"title"`
-	Description        string          `bson:"description"`
-	DueAt              time.Time       `bson:"due_at"`
-	Timezone           string          `bson:"timezone"`
-	Status             string          `bson:"status"`
-	Priority           string          `bson:"priority"`
-	Pinned             bool            `bson:"pinned"`
-	TagIDs             []uuid.UUID     `bson:"tag_ids,omitempty"`
-	RecurrenceRule     string          `bson:"recurrence_rule,omitempty"`
-	SeriesID           *uuid.UUID      `bson:"series_id,omitempty"`
-	RecurrenceUntil    *time.Time      `bson:"recurrence_until,omitempty"`
-	ChannelOverrides   map[string]bool `bson:"channel_overrides,omitempty"`
-	RequireAllSubtasks bool            `bson:"require_all_subtasks"`
-	AttachmentURL      string          `bson:"attachment_url,omitempty"`
-	AssigneeID         *uuid.UUID      `bson:"assignee_id,omitempty"`
-	GroupID            *uuid.UUID      `bson:"group_id,omitempty"`
-	SnoozedUntil       *time.Time      `bson:"snoozed_until,omitempty"`
-	PausedAt           *time.Time      `bson:"paused_at,omitempty"`
-	ResumeAt           *time.Time      `bson:"resume_at,omitempty"`
-	CompletedAt        *time.Time      `bson:"completed_at,omitempty"`
-	CreatedAt          time.Time       `bson:"created_at"`
-	UpdatedAt          time.Time       `bson:"updated_at"`
+	ID           uuid.UUID  `bson:"_id"`
+	UserID       uuid.UUID  `bson:"user_id"`
+	ListID       *uuid.UUID `bson:"list_id,omitempty"`
+	Title        string     `bson:"title"`
+	Description  string     `bson:"description"`
+	DueAt        time.Time  `bson:"due_at"`
+	Timezone     string     `bson:"timezone"`
+	Status       string     `bson:"status"`
+	Priority     string     `bson:"priority"`
+	Pinned       bool       `bson:"pinned"`
+	SnoozedUntil *time.Time `bson:"snoozed_until,omitempty"`
+	PausedAt     *time.Time `bson:"paused_at,omitempty"`
+	ResumeAt     *time.Time `bson:"resume_at,omitempty"`
+	CompletedAt  *time.Time `bson:"completed_at,omitempty"`
+	// Delivery claims. A non-nil value means that notification has already
+	// been dispatched and must not be sent again.
+	SentDueAt     *time.Time `bson:"sent_due_at,omitempty"`
+	SentAdvanceAt *time.Time `bson:"sent_advance_at,omitempty"`
+	Recurrence    string     `bson:"recurrence,omitempty"`
+	CreatedAt     time.Time  `bson:"created_at"`
+	UpdatedAt     time.Time  `bson:"updated_at"`
 }
 
 func reminderFromDoc(doc reminderDoc) reminder.Reminder {
-	tagIDs := doc.TagIDs
-	if tagIDs == nil {
-		tagIDs = []uuid.UUID{}
-	}
-	channelOverrides := doc.ChannelOverrides
-	if channelOverrides == nil {
-		channelOverrides = map[string]bool{}
-	}
 	return reminder.Reminder{
-		ID:                 doc.ID,
-		UserID:             doc.UserID,
-		ListID:             doc.ListID,
-		MailWordingID:      doc.MailWordingID,
-		Title:              doc.Title,
-		Description:        doc.Description,
-		DueAt:              doc.DueAt,
-		Timezone:           doc.Timezone,
-		Status:             doc.Status,
-		Priority:           doc.Priority,
-		Pinned:             doc.Pinned,
-		TagIDs:             tagIDs,
-		RecurrenceRule:     doc.RecurrenceRule,
-		SeriesID:           doc.SeriesID,
-		RecurrenceUntil:    doc.RecurrenceUntil,
-		ChannelOverrides:   channelOverrides,
-		RequireAllSubtasks: doc.RequireAllSubtasks,
-		AttachmentURL:      doc.AttachmentURL,
-		AssigneeID:         doc.AssigneeID,
-		GroupID:            doc.GroupID,
-		SnoozedUntil:       doc.SnoozedUntil,
-		PausedAt:           doc.PausedAt,
-		ResumeAt:           doc.ResumeAt,
-		CompletedAt:        doc.CompletedAt,
-		CreatedAt:          doc.CreatedAt,
-		UpdatedAt:          doc.UpdatedAt,
+		ID:            doc.ID,
+		UserID:        doc.UserID,
+		ListID:        doc.ListID,
+		Title:         doc.Title,
+		Description:   doc.Description,
+		DueAt:         doc.DueAt,
+		Timezone:      doc.Timezone,
+		Status:        doc.Status,
+		Priority:      doc.Priority,
+		Pinned:        doc.Pinned,
+		SnoozedUntil:  doc.SnoozedUntil,
+		PausedAt:      doc.PausedAt,
+		ResumeAt:      doc.ResumeAt,
+		CompletedAt:   doc.CompletedAt,
+		SentDueAt:     doc.SentDueAt,
+		SentAdvanceAt: doc.SentAdvanceAt,
+		Recurrence:    doc.Recurrence,
+		CreatedAt:     doc.CreatedAt,
+		UpdatedAt:     doc.UpdatedAt,
 	}
 }
 
 func (db *DB) CreateReminder(ctx context.Context, userID uuid.UUID, in reminder.CreateInput) (reminder.Reminder, error) {
 	title := strings.TrimSpace(in.Title)
 	if title == "" {
-		return reminder.Reminder{}, fmt.Errorf("title is required")
+		return reminder.Reminder{}, fmt.Errorf("%w: title is required", ErrInvalid)
 	}
 	if in.DueAt.IsZero() {
-		return reminder.Reminder{}, fmt.Errorf("due_at is required")
+		return reminder.Reminder{}, fmt.Errorf("%w: due_at is required", ErrInvalid)
 	}
 	priority := in.Priority
 	if priority == "" {
 		priority = reminder.PriorityNormal
 	}
-	tz := in.Timezone
+	if !reminder.ValidPriority(priority) {
+		return reminder.Reminder{}, fmt.Errorf("%w: unknown priority %q", ErrInvalid, priority)
+	}
+	recur := strings.TrimSpace(in.Recurrence)
+	if !reminder.ValidRecurrence(recur) {
+		return reminder.Reminder{}, fmt.Errorf("%w: unknown recurrence %q", ErrInvalid, recur)
+	}
+	tz := strings.TrimSpace(in.Timezone)
 	if tz == "" {
-		tz = "Asia/Kolkata"
-	}
-	tagIDs := in.TagIDs
-	if tagIDs == nil {
-		tagIDs = []uuid.UUID{}
-	}
-	channelOverrides := in.ChannelOverrides
-	if channelOverrides == nil {
-		channelOverrides = map[string]bool{}
+		tz = defaultTimezone
 	}
 	now := time.Now().UTC()
 	doc := reminderDoc{
-		ID:                 uuid.New(),
-		UserID:             userID,
-		ListID:             in.ListID,
-		MailWordingID:      in.MailWordingID,
-		Title:              title,
-		Description:        strings.TrimSpace(in.Description),
-		DueAt:              in.DueAt.UTC(),
-		Timezone:           tz,
-		Status:             reminder.StatusScheduled,
-		Priority:           priority,
-		TagIDs:             tagIDs,
-		RecurrenceRule:     strings.TrimSpace(in.RecurrenceRule),
-		SeriesID:           in.SeriesID,
-		RecurrenceUntil:    in.RecurrenceUntil,
-		ChannelOverrides:   channelOverrides,
-		RequireAllSubtasks: in.RequireAllSubtasks,
-		AttachmentURL:      strings.TrimSpace(in.AttachmentURL),
-		AssigneeID:         in.AssigneeID,
-		GroupID:            in.GroupID,
-		CreatedAt:          now,
-		UpdatedAt:          now,
-	}
-	if doc.RecurrenceUntil != nil {
-		doc.RecurrenceUntil = ptrUTC(doc.RecurrenceUntil)
+		ID:          uuid.New(),
+		UserID:      userID,
+		ListID:      in.ListID,
+		Title:       title,
+		Description: strings.TrimSpace(in.Description),
+		DueAt:       in.DueAt.UTC(),
+		Timezone:    tz,
+		Status:      reminder.StatusScheduled,
+		Priority:    priority,
+		Recurrence:  recur,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	_, err := db.collection("reminders").InsertOne(ctx, doc)
 	if err != nil {
 		return reminder.Reminder{}, err
 	}
-	created := reminderFromDoc(doc)
-	if err := db.MaterializeOccurrencesForReminder(ctx, userID, created); err != nil {
-		return reminder.Reminder{}, err
-	}
-	return created, nil
-}
-
-func ptrUTC(t *time.Time) *time.Time {
-	if t == nil {
-		return nil
-	}
-	utc := t.UTC()
-	return &utc
+	return reminderFromDoc(doc), nil
 }
 
 func (db *DB) GetReminder(ctx context.Context, userID, id uuid.UUID) (reminder.Reminder, error) {
@@ -173,15 +129,6 @@ func (db *DB) ListReminders(ctx context.Context, f reminder.ListFilter) ([]remin
 	if f.Status != "" {
 		filter["status"] = f.Status
 	}
-	if f.ListID != nil {
-		filter["list_id"] = *f.ListID
-	}
-	if f.Priority != "" {
-		filter["priority"] = f.Priority
-	}
-	if f.TagID != nil {
-		filter["tag_ids"] = *f.TagID
-	}
 	if f.From != nil || f.To != nil {
 		dueFilter := bson.M{}
 		if f.From != nil {
@@ -193,9 +140,12 @@ func (db *DB) ListReminders(ctx context.Context, f reminder.ListFilter) ([]remin
 		filter["due_at"] = dueFilter
 	}
 	if q := strings.TrimSpace(f.Query); q != "" {
+		// Treat the query as literal text: an unescaped user string is a valid
+		// regex, so "(((" would error and "(a+)+$" would pin the server.
+		pattern := regexp.QuoteMeta(q)
 		filter["$or"] = []bson.M{
-			{"title": bson.M{"$regex": q, "$options": "i"}},
-			{"description": bson.M{"$regex": q, "$options": "i"}},
+			{"title": bson.M{"$regex": pattern, "$options": "i"}},
+			{"description": bson.M{"$regex": pattern, "$options": "i"}},
 		}
 	}
 
@@ -203,6 +153,28 @@ func (db *DB) ListReminders(ctx context.Context, f reminder.ListFilter) ([]remin
 		SetSort(bson.D{{Key: "due_at", Value: 1}}).
 		SetLimit(int64(limit))
 	cur, err := db.collection("reminders").Find(ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	var out []reminder.Reminder
+	for cur.Next(ctx) {
+		var doc reminderDoc
+		if err := cur.Decode(&doc); err != nil {
+			return nil, err
+		}
+		out = append(out, reminderFromDoc(doc))
+	}
+	return out, cur.Err()
+}
+
+// ListRemindersForExport returns every non-deleted reminder for the user with
+// no cap, for backups. It bypasses ListFilter on purpose: an export that
+// silently stops at the usual page limit is worse than none.
+func (db *DB) ListRemindersForExport(ctx context.Context, userID uuid.UUID) ([]reminder.Reminder, error) {
+	opts := options.Find().SetSort(bson.D{{Key: "due_at", Value: 1}})
+	cur, err := db.collection("reminders").Find(ctx, bson.M{"user_id": userID}, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +200,7 @@ func (db *DB) UpdateReminder(ctx context.Context, userID, id uuid.UUID, in remin
 	if in.Title != nil {
 		title = strings.TrimSpace(*in.Title)
 		if title == "" {
-			return reminder.Reminder{}, fmt.Errorf("title is required")
+			return reminder.Reminder{}, fmt.Errorf("%w: title is required", ErrInvalid)
 		}
 	}
 	desc := cur.Description
@@ -242,87 +214,73 @@ func (db *DB) UpdateReminder(ctx context.Context, userID, id uuid.UUID, in remin
 	tz := cur.Timezone
 	if in.Timezone != nil {
 		tz = strings.TrimSpace(*in.Timezone)
+		if tz == "" {
+			tz = defaultTimezone
+		}
 	}
 	priority := cur.Priority
 	if in.Priority != nil {
 		priority = *in.Priority
+		if !reminder.ValidPriority(priority) {
+			return reminder.Reminder{}, fmt.Errorf("%w: unknown priority %q", ErrInvalid, priority)
+		}
 	}
 	status := cur.Status
 	if in.Status != nil {
 		status = *in.Status
+		if !reminder.ValidStatus(status) {
+			return reminder.Reminder{}, fmt.Errorf("%w: unknown status %q", ErrInvalid, status)
+		}
+	}
+	recur := cur.Recurrence
+	if in.Recurrence != nil {
+		recur = strings.TrimSpace(*in.Recurrence)
+		if !reminder.ValidRecurrence(recur) {
+			return reminder.Reminder{}, fmt.Errorf("%w: unknown recurrence %q", ErrInvalid, recur)
+		}
+	}
+	if status == reminder.StatusDone {
+		if next, ok := reminder.NextDueAfter(dueAt, tz, recur, time.Now().UTC()); ok {
+			dueAt = next
+			status = reminder.StatusScheduled
+		}
 	}
 	listID := cur.ListID
 	if in.ListID != nil {
 		listID = in.ListID
 	}
-	mailWordingID := cur.MailWordingID
-	if in.ClearMailWording {
-		mailWordingID = nil
-	} else if in.MailWordingID != nil {
-		mailWordingID = in.MailWordingID
+	pinned := cur.Pinned
+	if in.Pinned != nil {
+		pinned = *in.Pinned
 	}
-	tagIDs := cur.TagIDs
-	if in.TagIDs != nil {
-		tagIDs = *in.TagIDs
-	}
-	recurrenceRule := cur.RecurrenceRule
-	if in.RecurrenceRule != nil {
-		recurrenceRule = strings.TrimSpace(*in.RecurrenceRule)
-	}
-	seriesID := cur.SeriesID
-	if in.SeriesID != nil {
-		seriesID = in.SeriesID
-	}
-	recurrenceUntil := cur.RecurrenceUntil
-	if in.RecurrenceUntil != nil {
-		recurrenceUntil = ptrUTC(in.RecurrenceUntil)
-	}
-	channelOverrides := cur.ChannelOverrides
-	if in.ChannelOverrides != nil {
-		channelOverrides = *in.ChannelOverrides
-	}
-	requireAllSubtasks := cur.RequireAllSubtasks
-	if in.RequireAllSubtasks != nil {
-		requireAllSubtasks = *in.RequireAllSubtasks
-	}
-	attachmentURL := cur.AttachmentURL
-	if in.AttachmentURL != nil {
-		attachmentURL = strings.TrimSpace(*in.AttachmentURL)
-	}
-	assigneeID := cur.AssigneeID
-	if in.AssigneeID != nil {
-		assigneeID = in.AssigneeID
-	}
-	groupID := cur.GroupID
-	if in.GroupID != nil {
-		groupID = in.GroupID
-	}
+	// completed_at tracks status: stamp it on the way into done, clear it on the
+	// way back out so a reopened reminder does not keep a stale completion time.
 	completedAt := cur.CompletedAt
-	if status == reminder.StatusDone && cur.CompletedAt == nil {
+	switch {
+	case status == reminder.StatusDone && completedAt == nil:
 		now := time.Now().UTC()
 		completedAt = &now
+	case status != reminder.StatusDone:
+		completedAt = nil
 	}
 
 	set := bson.M{
-		"title":                title,
-		"description":          desc,
-		"due_at":               dueAt,
-		"timezone":             tz,
-		"priority":             priority,
-		"status":               status,
-		"list_id":              listID,
-		"mail_wording_id":      mailWordingID,
-		"tag_ids":              tagIDs,
-		"recurrence_rule":      recurrenceRule,
-		"series_id":            seriesID,
-		"recurrence_until":     recurrenceUntil,
-		"channel_overrides":    channelOverrides,
-		"require_all_subtasks": requireAllSubtasks,
-		"attachment_url":       attachmentURL,
-		"assignee_id":          assigneeID,
-		"group_id":             groupID,
-		"completed_at":         completedAt,
-		"updated_at":           time.Now().UTC(),
+		"title":        title,
+		"description":  desc,
+		"due_at":       dueAt,
+		"timezone":     tz,
+		"priority":     priority,
+		"status":       status,
+		"pinned":       pinned,
+		"recurrence":   recur,
+		"list_id":      listID,
+		"completed_at": completedAt,
+		"updated_at":   time.Now().UTC(),
+	}
+	// Moving the due date re-arms delivery: the claims refer to the old time.
+	if !dueAt.Equal(cur.DueAt) {
+		set["sent_due_at"] = nil
+		set["sent_advance_at"] = nil
 	}
 	res, err := db.collection("reminders").UpdateOne(ctx, bson.M{"_id": id, "user_id": userID}, bson.M{"$set": set})
 	if err != nil {
@@ -388,9 +346,15 @@ func (db *DB) ResumeReminder(ctx context.Context, userID, id uuid.UUID) (reminde
 }
 
 func (db *DB) SnoozeReminder(ctx context.Context, userID, id uuid.UUID, until time.Time) (reminder.Reminder, error) {
-	res, err := db.collection("reminders").UpdateOne(ctx, bson.M{"_id": id, "user_id": userID}, bson.M{"$set": bson.M{
-		"snoozed_until": until.UTC(),
-		"updated_at":    time.Now().UTC(),
+	res, err := db.collection("reminders").UpdateOne(ctx, bson.M{
+		"_id":     id,
+		"user_id": userID,
+		"status":  bson.M{"$in": []string{reminder.StatusScheduled, reminder.StatusPaused}},
+	}, bson.M{"$set": bson.M{
+		"snoozed_until":   until.UTC(),
+		"sent_due_at":     nil,
+		"sent_advance_at": nil,
+		"updated_at":      time.Now().UTC(),
 	}})
 	if err != nil {
 		return reminder.Reminder{}, err
@@ -399,4 +363,87 @@ func (db *DB) SnoozeReminder(ctx context.Context, userID, id uuid.UUID, until ti
 		return reminder.Reminder{}, ErrNotFound
 	}
 	return db.GetReminder(ctx, userID, id)
+}
+
+// DueKind distinguishes the two notifications a reminder can produce.
+type DueKind string
+
+const (
+	KindDue     DueKind = "due"
+	KindAdvance DueKind = "advance"
+)
+
+func (k DueKind) field() string {
+	if k == KindAdvance {
+		return "sent_advance_at"
+	}
+	return "sent_due_at"
+}
+
+// FireTime is when a reminder should actually notify. A snooze pushes the
+// reminder out, so it wins over the original due date.
+func FireTime(r reminder.Reminder) time.Time {
+	if r.SnoozedUntil != nil && r.SnoozedUntil.After(r.DueAt) {
+		return *r.SnoozedUntil
+	}
+	return r.DueAt
+}
+
+// ListPendingReminders returns scheduled reminders that could fire before the
+// horizon and have not yet been claimed for this kind of notification. The
+// caller filters per-user; the scheduler sweeps everyone in one query.
+func (db *DB) ListPendingReminders(ctx context.Context, kind DueKind, horizon time.Time, limit int64) ([]reminder.Reminder, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	filter := bson.M{
+		"status":     reminder.StatusScheduled,
+		kind.field(): bson.M{"$eq": nil},
+		// A snooze can push a reminder past the horizon; the caller rechecks
+		// the effective fire time, so this bound only narrows the candidates.
+		"$or": []bson.M{
+			{"due_at": bson.M{"$lte": horizon}},
+			{"snoozed_until": bson.M{"$lte": horizon, "$ne": nil}},
+		},
+	}
+	cur, err := db.collection("reminders").Find(ctx, filter,
+		options.Find().SetSort(bson.D{{Key: "due_at", Value: 1}}).SetLimit(limit))
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	var out []reminder.Reminder
+	for cur.Next(ctx) {
+		var doc reminderDoc
+		if err := cur.Decode(&doc); err != nil {
+			return nil, err
+		}
+		out = append(out, reminderFromDoc(doc))
+	}
+	return out, cur.Err()
+}
+
+// ClaimReminderNotification atomically marks one notification as dispatched.
+// It reports false when another worker (or an earlier tick) already claimed it,
+// which is what keeps a reminder from being delivered twice.
+func (db *DB) ClaimReminderNotification(ctx context.Context, id uuid.UUID, kind DueKind) (bool, error) {
+	res, err := db.collection("reminders").UpdateOne(ctx,
+		bson.M{"_id": id, kind.field(): bson.M{"$eq": nil}},
+		bson.M{"$set": bson.M{kind.field(): time.Now().UTC()}},
+	)
+	if err != nil {
+		return false, err
+	}
+	return res.ModifiedCount == 1, nil
+}
+
+// ReleaseReminderNotification undoes a claim so a failed send is retried on a
+// later tick rather than being silently dropped.
+func (db *DB) ReleaseReminderNotification(ctx context.Context, id uuid.UUID, kind DueKind) error {
+	_, err := db.collection("reminders").UpdateOne(ctx,
+		bson.M{"_id": id},
+		bson.M{"$set": bson.M{kind.field(): nil}},
+	)
+	return err
 }

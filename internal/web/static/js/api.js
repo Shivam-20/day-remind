@@ -1,9 +1,11 @@
-// Prefix absolute app paths with APP_BASE_PATH (from <base href="/remind/">).
-// Absolute "/api/..." and "/static/..." ignore <base>; fetch must add the prefix.
+// Prefix absolute app paths when served under a subpath (e.g. /remind/).
 const API = {
   base() {
-    const href = document.querySelector('base')?.getAttribute('href') || '/';
-    return href.replace(/\/$/, '');
+    const href = document.querySelector('base')?.getAttribute('href') || '';
+    const fromTag = href.replace(/\/$/, '');
+    if (fromTag) return fromTag;
+    const match = (location.pathname || '').match(/^(\/remind)(?:\/|$)/);
+    return match ? match[1] : '';
   },
   url(path) {
     if (!path) return path;
@@ -12,7 +14,8 @@ const API = {
     return path;
   },
   async request(path, options = {}) {
-    const res = await fetch(this.url(path), {
+    const url = this.url(path);
+    const res = await fetch(url, {
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
       ...options,

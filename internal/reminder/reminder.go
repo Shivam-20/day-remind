@@ -19,82 +19,74 @@ const (
 )
 
 type Reminder struct {
-	ID                 uuid.UUID
-	UserID             uuid.UUID
-	ListID             *uuid.UUID
-	MailWordingID      *uuid.UUID
-	Title              string
-	Description        string
-	DueAt              time.Time
-	Timezone           string
-	Status             string
-	Priority           string
-	Pinned             bool
-	TagIDs             []uuid.UUID
-	RecurrenceRule     string
-	SeriesID           *uuid.UUID
-	RecurrenceUntil    *time.Time
-	ChannelOverrides   map[string]bool
-	RequireAllSubtasks bool
-	AttachmentURL      string
-	AssigneeID         *uuid.UUID
-	GroupID            *uuid.UUID
-	SnoozedUntil       *time.Time
-	PausedAt           *time.Time
-	ResumeAt           *time.Time
-	CompletedAt        *time.Time
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	ID           uuid.UUID
+	UserID       uuid.UUID
+	ListID       *uuid.UUID
+	Title        string
+	Description  string
+	DueAt        time.Time
+	Timezone     string
+	Status       string
+	Priority     string
+	Pinned       bool
+	SnoozedUntil *time.Time
+	PausedAt     *time.Time
+	ResumeAt     *time.Time
+	CompletedAt  *time.Time
+	// SentDueAt and SentAdvanceAt record which notifications have already been
+	// dispatched, so a reminder is never delivered twice for the same event.
+	SentDueAt     *time.Time
+	SentAdvanceAt *time.Time
+	Recurrence    string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type CreateInput struct {
-	Title              string
-	Description        string
-	DueAt              time.Time
-	Timezone           string
-	Priority           string
-	ListID             *uuid.UUID
-	MailWordingID      *uuid.UUID
-	TagIDs             []uuid.UUID
-	RecurrenceRule     string
-	SeriesID           *uuid.UUID
-	RecurrenceUntil    *time.Time
-	ChannelOverrides   map[string]bool
-	RequireAllSubtasks bool
-	AttachmentURL      string
-	AssigneeID         *uuid.UUID
-	GroupID            *uuid.UUID
+	Title       string
+	Description string
+	DueAt       time.Time
+	Timezone    string
+	Priority    string
+	ListID      *uuid.UUID
+	Recurrence  string
 }
 
 type UpdateInput struct {
-	Title              *string
-	Description        *string
-	DueAt              *time.Time
-	Timezone           *string
-	Priority           *string
-	Status             *string
-	ListID             *uuid.UUID
-	MailWordingID      *uuid.UUID
-	ClearMailWording   bool
-	TagIDs             *[]uuid.UUID
-	RecurrenceRule     *string
-	SeriesID           *uuid.UUID
-	RecurrenceUntil    *time.Time
-	ChannelOverrides   *map[string]bool
-	RequireAllSubtasks *bool
-	AttachmentURL      *string
-	AssigneeID         *uuid.UUID
-	GroupID            *uuid.UUID
+	Title       *string
+	Description *string
+	DueAt       *time.Time
+	Timezone    *string
+	Priority    *string
+	Status      *string
+	Pinned      *bool
+	ListID      *uuid.UUID
+	Recurrence  *string
 }
 
 type ListFilter struct {
-	UserID   uuid.UUID
-	Status   string
-	From     *time.Time
-	To       *time.Time
-	Query    string
-	ListID   *uuid.UUID
-	Priority string
-	TagID    *uuid.UUID
-	Limit    int
+	UserID uuid.UUID
+	Status string
+	From   *time.Time
+	To     *time.Time
+	Query  string
+	Limit  int
+}
+
+// ValidStatus reports whether s is one of the four reminder states.
+func ValidStatus(s string) bool {
+	switch s {
+	case StatusScheduled, StatusPaused, StatusDone, StatusCancelled:
+		return true
+	}
+	return false
+}
+
+// ValidPriority reports whether p is one of the four priority levels.
+func ValidPriority(p string) bool {
+	switch p {
+	case PriorityLow, PriorityNormal, PriorityHigh, PriorityUrgent:
+		return true
+	}
+	return false
 }

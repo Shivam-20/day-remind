@@ -1,3 +1,0 @@
-- Writes temporary Go scripts inside the app module (e.g., `cmd/resetpw/main.go`) to perform one-off admin/data operations, then removes them after use. Confidence: 0.9
-- Reuses the application's own internal packages/libraries (e.g., `internal/auth.HashPassword`, `internal/config.Load`) for scripts and tooling, rather than external tools or ad-hoc implementations, to ensure consistency. Confidence: 0.85
-- Cleans up temporary files and scripts promptly after use to keep the working tree clean. Confidence: 0.9

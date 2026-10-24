@@ -2,6 +2,8 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 )
 
@@ -15,8 +17,20 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+// maxRequestBody caps how much of a request body is read. Every endpoint here
+// takes a small JSON object, so an unbounded read is pure downside.
+const maxRequestBody = 1 << 20 // 1 MiB
+
 func decodeJSON(r *http.Request, dst any) error {
-	dec := json.NewDecoder(r.Body)
+	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, maxRequestBody))
 	dec.DisallowUnknownFields()
-	return dec.Decode(dst)
+	if err := dec.Decode(dst); err != nil {
+		return err
+	}
+	// Reject trailing content so a body like `{}{"admin":true}` cannot slip a
+	// second object past the decoder unnoticed.
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return errors.New("body must contain a single JSON object")
+	}
+	return nil
 }
