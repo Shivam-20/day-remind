@@ -55,8 +55,11 @@ function calDotClass(ev) {
 async function renderCalendar() {
   const year = featureState.calendarMonth.getFullYear();
   const month = featureState.calendarMonth.getMonth();
-  const from = new Date(year, month, 1);
-  const to = new Date(year, month + 1, 0, 23, 59, 59);
+  const firstDow = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const totalCells = Math.ceil((firstDow + daysInMonth) / 7) * 7;
+  const from = new Date(year, month, 1 - firstDow);
+  const to = new Date(year, month, 1 - firstDow + totalCells, 23, 59, 59);
   const events = await loadCalendarEvents(from, to);
   const byDay = {};
   events.forEach((ev) => {
@@ -66,27 +69,36 @@ async function renderCalendar() {
     byDay[key].push(ev);
   });
 
-  const firstDow = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
   const monthLabel = featureState.calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-  let cells = '';
-  for (let i = 0; i < firstDow; i++) {
-    cells += '<div class="cal-cell cal-empty"></div>';
-  }
   const todayKey = localDayKey(new Date().toISOString());
-  for (let d = 1; d <= daysInMonth; d++) {
-    const key = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    const dayEvents = byDay[key] || [];
-    const dots = dayEvents
-      .filter((ev) => ev.status !== 'done' && ev.status !== 'cancelled')
-      .slice(0, 3)
+  const pillClass = (ev) => {
+    const d = calDotClass(ev);
+    if (d === 'cal-dot-overdue') return 'cal-ev cal-ev-overdue';
+    if (d === 'cal-dot-urgent') return 'cal-ev cal-ev-urgent';
+    if (d === 'cal-dot-high') return 'cal-ev cal-ev-high';
+    return 'cal-ev';
+  };
+  let cells = '';
+  for (let i = 0; i < totalCells; i++) {
+    const d = new Date(year, month, 1 - firstDow + i);
+    const key = localDayKey(d.toISOString());
+    const inMonth = d.getMonth() === month;
+    const shown = (byDay[key] || []).filter((ev) => ev.status !== 'done' && ev.status !== 'cancelled');
+    const dots = shown.slice(0, 3)
       .map((ev) => `<i class="cal-dot ${calDotClass(ev)}" aria-hidden="true"></i>`)
       .join('');
+    const pills = shown.slice(0, 2).map((ev) => {
+      const when = new Date(ev.start);
+      const time = Number.isNaN(when.getTime()) ? '' : when.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      return `<span class="${pillClass(ev)}"><span class="cal-ev-time">${time}</span><span class="cal-ev-title">${escapeHTML(ev.title)}</span></span>`;
+    }).join('');
+    const more = shown.length > 2 ? `<span class="cal-more">+${shown.length - 2} more</span>` : '';
     const isToday = key === todayKey;
     const isSelected = featureState.selectedDay === key;
-    const ariaLabel = `${d} ${monthLabel}${dayEvents.length ? `, ${dayEvents.length} reminder${dayEvents.length !== 1 ? 's' : ''}` : ''}`;
-    cells += `<button type="button" class="cal-cell${isToday ? ' cal-today' : ''}${isSelected ? ' cal-selected' : ''}" data-day="${key}" aria-label="${escapeHTML(ariaLabel)}">
-      <span class="cal-day-num">${d}</span>
+    const ariaLabel = `${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}${shown.length ? `, ${shown.length} reminder${shown.length !== 1 ? 's' : ''}` : ''}`;
+    cells += `<button type="button" class="cal-cell${inMonth ? '' : ' cal-out'}${isToday ? ' cal-today' : ''}${isSelected ? ' cal-selected' : ''}" data-day="${key}" aria-label="${escapeHTML(ariaLabel)}">
+      <span class="cal-day-num">${d.getDate()}</span>
+      <span class="cal-evs">${pills}${more}</span>
       <span class="cal-dots">${dots}</span>
     </button>`;
   }
@@ -101,6 +113,7 @@ async function renderCalendar() {
         ${selectedEvents.length
           ? selectedEvents.map((ev) => `
             <div class="cal-srow${isOverdue(ev) ? ' late' : ''}">
+              <i class="cal-dot ${calDotClass(ev)} cal-srow-dot" aria-hidden="true"></i>
               <span class="cal-srow-when">${escapeHTML(formatDue(ev.start, ev.timezone))}</span>
               <span class="cal-srow-title">${ev.pinned ? iconHTML('pin') : ''}${escapeHTML(ev.title)}</span>
               <button type="button" class="icon-btn" data-action="detail" data-id="${escapeHTML(ev.id)}" aria-label="Details for ${escapeHTML(ev.title)}">${actionIconSVG('info')}</button>
