@@ -648,7 +648,9 @@ button.stat-card:active { transform: translateY(0); }
   color: var(--btn-accent-ink);
   font-weight: 700;
 }
-.due-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.due-chips { display: grid; gap: 6px; }
+.due-side-col > .due-chips { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.due-time-block .due-chips { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .chip {
   border: 1px solid var(--border);
   background: var(--surface-2);
@@ -662,17 +664,25 @@ button.stat-card:active { transform: translateY(0); }
 }
 .chip:hover { color: var(--text-1); border-color: var(--border-strong); }
 .chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--text-1); font-weight: 600; }
-.due-fields #r-due-date { margin-bottom: 12px; }
-.due-time-block label { display: block; margin-bottom: 6px; }
+.due-fields .chip {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 36px; padding: 5px 4px; text-align: center;
+}
+.due-fields #r-due-date { margin-bottom: 0; }
+.due-time-block { display: flex; flex-direction: column; gap: 8px; }
+.due-time-block label { display: block; margin-bottom: 0; }
 .due-time-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
-  margin-bottom: 8px;
 }
 .due-time-row input { width: 100%; }
-.due-step { min-width: 48px; }
+.due-step {
+  min-width: 48px;
+  align-self: stretch;
+  display: inline-flex; align-items: center; justify-content: center;
+}
 .seg {
   display: flex;
   background: var(--surface-2);
@@ -1260,16 +1270,23 @@ button.stat-card:active { transform: translateY(0); }
 .btn > svg { width: 1rem; height: 1rem; flex: none; }
 
 /* — WHEN field: calendar + side column (2026-10-24 calendar improvement) — */
+.due-fields { container-type: inline-size; }
 .due-layout {
   display: grid;
   grid-template-columns: minmax(0, 330px) minmax(0, 1fr);
   gap: 14px;
   align-items: start;
 }
-@media (max-width: 640px) { .due-layout { grid-template-columns: 1fr; } }
+/* stack when the WHEN block itself is narrow (drawer, phones) — the side
+   column needs ~220px next to the calendar or it collapses into orphans */
+@container (max-width: 520px) {
+  .due-layout { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .due-layout .due-cal { margin-bottom: 0; margin-inline: auto; }
+}
+.due-layout .due-cal { margin-bottom: 0; }
 .due-cal-col { min-width: 0; }
-.due-side-col { min-width: 0; display: flex; flex-direction: column; }
-.due-side-col .due-time-block { margin-top: 2px; }
+.due-side-col { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.due-side-col .due-time-block { margin-top: 0; }
 .due-cal { max-width: 330px; padding: 12px; }
 .due-cal-weekdays { margin-bottom: 4px; }
 .due-cal-weekdays span {
