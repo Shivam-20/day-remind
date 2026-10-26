@@ -25,6 +25,7 @@ type reminderDoc struct {
 	Status       string     `bson:"status"`
 	Priority     string     `bson:"priority"`
 	Pinned       bool       `bson:"pinned"`
+	Hidden       bool       `bson:"hidden,omitempty"`
 	SnoozedUntil *time.Time `bson:"snoozed_until,omitempty"`
 	PausedAt     *time.Time `bson:"paused_at,omitempty"`
 	ResumeAt     *time.Time `bson:"resume_at,omitempty"`
@@ -50,6 +51,7 @@ func reminderFromDoc(doc reminderDoc) reminder.Reminder {
 		Status:        doc.Status,
 		Priority:      doc.Priority,
 		Pinned:        doc.Pinned,
+		Hidden:        doc.Hidden,
 		SnoozedUntil:  doc.SnoozedUntil,
 		PausedAt:      doc.PausedAt,
 		ResumeAt:      doc.ResumeAt,
@@ -97,6 +99,7 @@ func (db *DB) CreateReminder(ctx context.Context, userID uuid.UUID, in reminder.
 		Status:      reminder.StatusScheduled,
 		Priority:    priority,
 		Recurrence:  recur,
+		Hidden:      in.Hidden,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -147,6 +150,9 @@ func (db *DB) ListReminders(ctx context.Context, f reminder.ListFilter) ([]remin
 			{"title": bson.M{"$regex": pattern, "$options": "i"}},
 			{"description": bson.M{"$regex": pattern, "$options": "i"}},
 		}
+		// A search hit on a hidden reminder would confirm its masked content
+		// matches the query, so text search skips them entirely.
+		filter["hidden"] = bson.M{"$ne": true}
 	}
 
 	opts := options.Find().
@@ -253,6 +259,10 @@ func (db *DB) UpdateReminder(ctx context.Context, userID, id uuid.UUID, in remin
 	if in.Pinned != nil {
 		pinned = *in.Pinned
 	}
+	hidden := cur.Hidden
+	if in.Hidden != nil {
+		hidden = *in.Hidden
+	}
 	// completed_at tracks status: stamp it on the way into done, clear it on the
 	// way back out so a reopened reminder does not keep a stale completion time.
 	completedAt := cur.CompletedAt
@@ -272,6 +282,7 @@ func (db *DB) UpdateReminder(ctx context.Context, userID, id uuid.UUID, in remin
 		"priority":     priority,
 		"status":       status,
 		"pinned":       pinned,
+		"hidden":       hidden,
 		"recurrence":   recur,
 		"list_id":      listID,
 		"completed_at": completedAt,
@@ -301,6 +312,13 @@ func (db *DB) DeleteReminder(ctx context.Context, userID, id uuid.UUID) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// CountHiddenReminders reports how many of the user's reminders are currently
+// hidden. Removing the privacy password is refused while this is non-zero,
+// because those reminders would become permanently unreachable.
+func (db *DB) CountHiddenReminders(ctx context.Context, userID uuid.UUID) (int64, error) {
+	return db.collection("reminders").CountDocuments(ctx, bson.M{"user_id": userID, "hidden": true})
 }
 
 func (db *DB) PauseReminder(ctx context.Context, userID, id uuid.UUID, resumeAt *time.Time) (reminder.Reminder, error) {

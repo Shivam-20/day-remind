@@ -164,6 +164,7 @@ func userPayload(u storage.User) map[string]any {
 		"timezone":             u.Timezone,
 		"locale":               u.Locale,
 		"notifications_paused": u.NotificationsPaused,
+		"privacy_enabled":      u.HideHash != "",
 	}
 	if u.NotificationsPausedUntil != nil {
 		out["notifications_paused_until"] = u.NotificationsPausedUntil.UTC().Format(time.RFC3339)

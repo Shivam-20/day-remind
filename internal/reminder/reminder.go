@@ -19,16 +19,20 @@ const (
 )
 
 type Reminder struct {
-	ID           uuid.UUID
-	UserID       uuid.UUID
-	ListID       *uuid.UUID
-	Title        string
-	Description  string
-	DueAt        time.Time
-	Timezone     string
-	Status       string
-	Priority     string
-	Pinned       bool
+	ID          uuid.UUID
+	UserID      uuid.UUID
+	ListID      *uuid.UUID
+	Title       string
+	Description string
+	DueAt       time.Time
+	Timezone    string
+	Status      string
+	Priority    string
+	Pinned      bool
+	// Hidden reminders are the owner's private entries: every read masks the
+	// title and description until the account privacy password unlocks them.
+	// They still fire notifications like any other reminder.
+	Hidden       bool
 	SnoozedUntil *time.Time
 	PausedAt     *time.Time
 	ResumeAt     *time.Time
@@ -50,6 +54,7 @@ type CreateInput struct {
 	Priority    string
 	ListID      *uuid.UUID
 	Recurrence  string
+	Hidden      bool
 }
 
 type UpdateInput struct {
@@ -60,6 +65,7 @@ type UpdateInput struct {
 	Priority    *string
 	Status      *string
 	Pinned      *bool
+	Hidden      *bool
 	ListID      *uuid.UUID
 	Recurrence  *string
 }

@@ -57,6 +57,8 @@ func (s *Server) Handler() http.Handler {
 		pr.Get("/api/export/json", s.handleExportJSON)
 		pr.Get("/api/export/ical", s.handleExportICal)
 		pr.Post("/api/me/notifications/pause", s.handlePauseNotifications)
+		pr.Post("/api/me/privacy", s.handleSetPrivacyPassword)
+		pr.Delete("/api/me/privacy", s.handleDeletePrivacyPassword)
 		pr.Post("/api/me/notifications/resume", s.handleResumeNotifications)
 
 		pr.Get("/api/me/notify", s.handleGetNotifySettings)
@@ -85,6 +87,8 @@ func (s *Server) Handler() http.Handler {
 		pr.Post("/api/reminders/{id}/pause", s.handlePauseReminder)
 		pr.Post("/api/reminders/{id}/resume", s.handleResumeReminder)
 		pr.Post("/api/reminders/{id}/snooze", s.handleSnoozeReminder)
+		pr.Post("/api/reminders/{id}/unlock", s.handleUnlockReminder)
+		pr.Post("/api/reminders/{id}/unhide", s.handleUnhideReminder)
 
 		pr.Get("/api/lists", s.handleListLists)
 		pr.Post("/api/lists", s.handleCreateList)

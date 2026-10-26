@@ -1354,3 +1354,25 @@ button.stat-card:active { transform: translateY(0); }
 
 .sec-head .sec-link { display: inline-flex; align-items: center; min-height: 24px; padding: 2px 6px; margin-right: -6px; border-radius: 8px; }
 .sec-head .sec-link:hover { background: var(--accent-2-soft); }
+
+/* ---------------------------------------------------------------- hidden reminders */
+
+.row-card.is-locked { border-style: dashed; }
+.row-card.is-locked .row-title { color: var(--text-2); }
+.row-lock { display: flex; align-items: center; color: var(--text-3); }
+.row-card.is-locked .btn-sm { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; }
+
+.privacy-fields .privacy-toggle {
+  display: flex; align-items: center; gap: 10px;
+  cursor: pointer; padding: 2px 0; color: var(--text-2);
+}
+.privacy-fields .privacy-toggle input { width: 17px; height: 17px; accent-color: var(--accent); flex: none; }
+#r-privacy-pw-wrap { margin-top: 10px; }
+#r-privacy-pw-wrap .field-label { display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 600; }
+.privacy-hint { font-size: 0.82rem; color: var(--text-3); margin: 6px 0 0; }
+.privacy-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 12px; margin-bottom: 14px;
+  border: 1px dashed var(--border); border-radius: var(--radius-sm);
+  color: var(--text-2); font-size: 0.9rem;
+}

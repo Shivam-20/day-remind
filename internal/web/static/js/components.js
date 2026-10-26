@@ -143,6 +143,8 @@ function actionIconSVG(name) {
     panel: `<svg ${s}><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>`,
     pin: `<svg ${s}><path d="M12 17v5M8 3h8l1 6-5 3-5-3Z"/></svg>`,
     'pin-off': `<svg ${s}><path d="M12 17v5M8 3h8l1 6-5 3-5-3Z"/><path d="m2 2 20 20"/></svg>`,
+    lock: `<svg ${s}><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`,
+    unlock: `<svg ${s}><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>`,
     search: `<svg ${s}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>`,
     plus: `<svg ${s}><path d="M5 12h14M12 5v14"/></svg>`,
     x: `<svg ${s}><path d="M18 6 6 18M6 6l12 12"/></svg>`,
@@ -224,7 +226,49 @@ function rowOverflowMenuHTML(item) {
     </div>`;
 }
 
+function lockedOverflowMenuHTML(item) {
+  return `
+    <div class="menu-anchor">
+      <button type="button" class="icon-btn" data-menu-toggle aria-label="More actions" aria-haspopup="menu">${actionIconSVG('more-horizontal')}</button>
+      <div class="menu" role="menu">
+        <button type="button" data-action="unhide" data-id="${escapeHTML(item.id)}">${iconHTML('unlock')}Unhide permanently</button>
+        <div class="menu-sep" role="separator"></div>
+        <button type="button" class="danger" data-action="delete" data-id="${escapeHTML(item.id)}">${iconHTML('trash')}Delete</button>
+      </div>
+    </div>`;
+}
+
+// lockedReminderRowHTML renders a hidden reminder that has not been unlocked
+// this session: the server already masked the title, so only metadata shows.
+function lockedReminderRowHTML(item, opts = {}) {
+  const cls = ['row-card', 'is-locked', isOverdue(item) ? 'overdue' : ''].filter(Boolean).join(' ');
+  const menu = opts.menu === false ? '' : lockedOverflowMenuHTML(item);
+  const metaParts = [];
+  metaParts.push(`<span class="row-when">${escapeHTML(formatDue(item.due_at, item.timezone))}</span>`);
+  if (item.recurrence) metaParts.push(`<span class="tag">${escapeHTML(item.recurrence)}</span>`);
+  if (item.status === 'paused') metaParts.push(tagHTML('paused', 'paused'));
+  if (item.status === 'done') metaParts.push(tagHTML('done', 'done'));
+  return `
+    <article class="${cls}" data-id="${escapeHTML(item.id)}">
+      <span class="row-lock">${iconHTML('lock')}</span>
+      <div class="row-main">
+        <div class="row-title">${escapeHTML(item.title)}</div>
+        <div class="row-meta">${metaParts.join('')} <span class="tag">hidden</span></div>
+      </div>
+      <div class="row-actions">
+        <button type="button" class="btn btn-sm" data-action="unlock" data-id="${escapeHTML(item.id)}">${actionIconSVG('unlock')}Unlock</button>
+        ${menu}
+      </div>
+    </article>`;
+}
+
 function reminderRowHTML(item, opts = {}) {
+  if (item.hidden) {
+    if (!state.revealed || !state.revealed.has(item.id)) return lockedReminderRowHTML(item, opts);
+    // Unlocked this session: render the real content kept from the unlock
+    // response, with a lock chip so it stays obvious the reminder is hidden.
+    item = (state.revealedData && state.revealedData.get(item.id)) || item;
+  }
   const cls = [
     'row-card',
     isOverdue(item) ? 'overdue' : '',
@@ -245,7 +289,7 @@ function reminderRowHTML(item, opts = {}) {
     <article class="${cls}" data-id="${escapeHTML(item.id)}">
       ${check}
       <div class="row-main">
-        <div class="row-title">${item.pinned ? iconHTML('pin') : ''}${escapeHTML(item.title)}</div>
+        <div class="row-title">${item.hidden ? iconHTML('lock') : ''}${item.pinned ? iconHTML('pin') : ''}${escapeHTML(item.title)}</div>
         <div class="row-meta">${metaParts.join('')} ${reminderTags(item)}</div>
       </div>
       <div class="row-actions">${hover}${menu}</div>

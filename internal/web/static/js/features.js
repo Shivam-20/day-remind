@@ -39,6 +39,7 @@ async function loadCalendarEvents(from, to) {
         timezone: r.timezone,
         pinned: r.pinned,
         recurrence: r.recurrence,
+        hidden: r.hidden,
       }));
   }
 }
@@ -90,7 +91,8 @@ async function renderCalendar() {
     const pills = shown.slice(0, 2).map((ev) => {
       const when = new Date(ev.start);
       const time = Number.isNaN(when.getTime()) ? '' : when.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-      return `<span class="${pillClass(ev)}"><span class="cal-ev-time">${time}</span><span class="cal-ev-title">${escapeHTML(ev.title)}</span></span>`;
+      const label = ev.hidden ? 'Hidden' : ev.title;
+      return `<span class="${pillClass(ev)}"><span class="cal-ev-time">${time}</span><span class="cal-ev-title">${ev.hidden ? iconHTML('lock') : ''}${escapeHTML(label)}</span></span>`;
     }).join('');
     const more = shown.length > 2 ? `<span class="cal-more">+${shown.length - 2} more</span>` : '';
     const isToday = key === todayKey;
@@ -115,8 +117,8 @@ async function renderCalendar() {
             <div class="cal-srow${isOverdue(ev) ? ' late' : ''}">
               <i class="cal-dot ${calDotClass(ev)} cal-srow-dot" aria-hidden="true"></i>
               <span class="cal-srow-when">${escapeHTML(formatDue(ev.start, ev.timezone))}</span>
-              <span class="cal-srow-title">${ev.pinned ? iconHTML('pin') : ''}${escapeHTML(ev.title)}</span>
-              <button type="button" class="icon-btn" data-action="detail" data-id="${escapeHTML(ev.id)}" aria-label="Details for ${escapeHTML(ev.title)}">${actionIconSVG('info')}</button>
+              <span class="cal-srow-title">${ev.hidden ? iconHTML('lock') : ''}${ev.pinned ? iconHTML('pin') : ''}${escapeHTML(ev.hidden ? 'Hidden reminder' : ev.title)}</span>
+              <button type="button" class="icon-btn" data-action="detail" data-id="${escapeHTML(ev.id)}" aria-label="Details for ${escapeHTML(ev.hidden ? 'hidden reminder' : ev.title)}">${actionIconSVG('info')}</button>
             </div>`).join('')
           : emptyState('Nothing scheduled', 'Enjoy the empty day.', '', 'sun')}
         <button class="cal-add" type="button" id="cal-add-day">${actionIconSVG('calendar-plus')}Add for this day</button>

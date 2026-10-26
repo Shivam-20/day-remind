@@ -29,6 +29,9 @@ func (s *Server) handleListSubtasks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if _, ok := s.reminderOrLock(w, r); !ok {
+		return
+	}
 	items, err := s.db.ListSubtasks(r.Context(), userID, reminderID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not list subtasks")
@@ -45,6 +48,9 @@ func (s *Server) handleCreateSubtask(w http.ResponseWriter, r *http.Request) {
 	userID := userIDFromContext(r.Context())
 	reminderID, ok := parseURLUUID(w, r, "id")
 	if !ok {
+		return
+	}
+	if _, ok := s.reminderOrLock(w, r); !ok {
 		return
 	}
 	var body subtaskCreateRequest
@@ -67,6 +73,9 @@ func (s *Server) handleUpdateSubtask(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if _, ok := s.reminderOrLock(w, r); !ok {
+		return
+	}
 	var body subtaskUpdateRequest
 	if err := decodeJSON(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -87,6 +96,9 @@ func (s *Server) handleDeleteSubtask(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if _, ok := s.reminderOrLock(w, r); !ok {
+		return
+	}
 	if err := s.db.DeleteSubtask(r.Context(), userID, subID); err == storage.ErrNotFound {
 		writeError(w, http.StatusNotFound, "not found")
 		return
@@ -101,6 +113,9 @@ func (s *Server) handleReorderSubtasks(w http.ResponseWriter, r *http.Request) {
 	userID := userIDFromContext(r.Context())
 	reminderID, ok := parseURLUUID(w, r, "id")
 	if !ok {
+		return
+	}
+	if _, ok := s.reminderOrLock(w, r); !ok {
 		return
 	}
 	var body subtaskReorderRequest

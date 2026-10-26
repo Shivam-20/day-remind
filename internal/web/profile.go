@@ -88,6 +88,82 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// ---------------------------------------------------------------- privacy password
+
+type privacyPasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+// handleSetPrivacyPassword creates or rotates the privacy password that
+// unlocks hidden reminders. Rotating requires the current one; creating is
+// free because nothing is hidden yet.
+func (s *Server) handleSetPrivacyPassword(w http.ResponseWriter, r *http.Request) {
+	userID := userIDFromContext(r.Context())
+	var body privacyPasswordRequest
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	user, err := s.db.GetUserByID(r.Context(), userID)
+	if err != nil {
+		writeStorageError(w, err, "could not load profile")
+		return
+	}
+	if user.HideHash != "" && !auth.CheckPassword(user.HideHash, body.CurrentPassword) {
+		writeError(w, http.StatusUnauthorized, "current privacy password is incorrect")
+		return
+	}
+	hash, err := auth.HashPassword(body.NewPassword)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "privacy password must be at least 8 characters")
+		return
+	}
+	if err := s.db.SetUserHideHash(r.Context(), userID, hash); err != nil {
+		writeStorageError(w, err, "could not save privacy password")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleDeletePrivacyPassword removes the privacy password. Hidden reminders
+// would become unreachable without it, so removal is refused while any exist.
+func (s *Server) handleDeletePrivacyPassword(w http.ResponseWriter, r *http.Request) {
+	userID := userIDFromContext(r.Context())
+	var body unlockRequest
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	user, err := s.db.GetUserByID(r.Context(), userID)
+	if err != nil {
+		writeStorageError(w, err, "could not load profile")
+		return
+	}
+	if user.HideHash == "" {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		return
+	}
+	if !auth.CheckPassword(user.HideHash, body.Password) {
+		writeError(w, http.StatusUnauthorized, "wrong privacy password")
+		return
+	}
+	n, err := s.db.CountHiddenReminders(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not count hidden reminders")
+		return
+	}
+	if n > 0 {
+		writeError(w, http.StatusConflict, fmt.Sprintf("unhide your %d hidden reminder%s before removing the privacy password", n, map[bool]string{true: "s", false: ""}[n != 1]))
+		return
+	}
+	if err := s.db.SetUserHideHash(r.Context(), userID, ""); err != nil {
+		writeStorageError(w, err, "could not remove privacy password")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 // ---------------------------------------------------------------- export
 
 func (s *Server) handleExportJSON(w http.ResponseWriter, r *http.Request) {

@@ -16,12 +16,7 @@ func (s *Server) handleListComments(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	userID := userIDFromContext(r.Context())
-	if _, err := s.db.GetReminder(r.Context(), userID, reminderID); err == storage.ErrNotFound {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load reminder")
+	if _, ok := s.reminderOrLock(w, r); !ok {
 		return
 	}
 	items, err := s.db.ListComments(r.Context(), reminderID)
@@ -42,11 +37,7 @@ func (s *Server) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, err := s.db.GetReminder(r.Context(), userID, reminderID); err == storage.ErrNotFound {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load reminder")
+	if _, ok := s.reminderOrLock(w, r); !ok {
 		return
 	}
 	var body commentCreateRequest

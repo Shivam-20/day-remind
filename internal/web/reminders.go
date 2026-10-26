@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/shivam-20/day-remind/internal/auth"
 	"github.com/shivam-20/day-remind/internal/reminder"
 	"github.com/shivam-20/day-remind/internal/storage"
 )
@@ -20,18 +21,28 @@ type createReminderRequest struct {
 	Priority    string  `json:"priority"`
 	ListID      *string `json:"list_id"`
 	Recurrence  string  `json:"recurrence"`
+	Hidden      bool    `json:"hidden"`
+	// PrivacyPassword bootstraps the account privacy password on the first
+	// hidden reminder. It is ignored once that password exists.
+	PrivacyPassword string `json:"privacy_password"`
 }
 
 type updateReminderRequest struct {
-	Title       *string `json:"title"`
-	Description *string `json:"description"`
-	DueAt       *string `json:"due_at"`
-	Timezone    *string `json:"timezone"`
-	Priority    *string `json:"priority"`
-	Status      *string `json:"status"`
-	Pinned      *bool   `json:"pinned"`
-	ListID      *string `json:"list_id"`
-	Recurrence  *string `json:"recurrence"`
+	Title           *string `json:"title"`
+	Description     *string `json:"description"`
+	DueAt           *string `json:"due_at"`
+	Timezone        *string `json:"timezone"`
+	Priority        *string `json:"priority"`
+	Status          *string `json:"status"`
+	Pinned          *bool   `json:"pinned"`
+	Hidden          *bool   `json:"hidden"`
+	ListID          *string `json:"list_id"`
+	Recurrence      *string `json:"recurrence"`
+	PrivacyPassword string  `json:"privacy_password"`
+}
+
+type unlockRequest struct {
+	Password string `json:"password"`
 }
 
 type snoozeRequest struct {
@@ -92,6 +103,10 @@ func (s *Server) handleListReminders(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(items))
 	for _, item := range items {
+		if item.Hidden {
+			out = append(out, maskedReminderPayload(item))
+			continue
+		}
 		out = append(out, reminderPayload(item))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"reminders": out})
@@ -116,6 +131,7 @@ func (s *Server) handleCreateReminder(w http.ResponseWriter, r *http.Request) {
 		Timezone:    body.Timezone,
 		Priority:    body.Priority,
 		Recurrence:  body.Recurrence,
+		Hidden:      body.Hidden,
 	}
 	if body.ListID != nil && *body.ListID != "" {
 		id, err := uuid.Parse(*body.ListID)
@@ -125,12 +141,19 @@ func (s *Server) handleCreateReminder(w http.ResponseWriter, r *http.Request) {
 		}
 		in.ListID = &id
 	}
+	// Hiding needs an account privacy password to unlock with; the first
+	// hidden reminder can create it inline.
+	if body.Hidden {
+		if !s.ensurePrivacyPassword(w, r, userID, body.PrivacyPassword) {
+			return
+		}
+	}
 	item, err := s.db.CreateReminder(r.Context(), userID, in)
 	if err != nil {
 		writeStorageError(w, err, "could not create reminder")
 		return
 	}
-	writeJSON(w, http.StatusCreated, reminderPayload(item))
+	reminderResponse(w, http.StatusCreated, item)
 }
 
 func (s *Server) handleGetReminder(w http.ResponseWriter, r *http.Request) {
@@ -145,7 +168,7 @@ func (s *Server) handleGetReminder(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err, "could not load reminder")
 		return
 	}
-	writeJSON(w, http.StatusOK, reminderPayload(item))
+	reminderResponse(w, http.StatusOK, item)
 }
 
 func (s *Server) handleUpdateReminder(w http.ResponseWriter, r *http.Request) {
@@ -167,6 +190,7 @@ func (s *Server) handleUpdateReminder(w http.ResponseWriter, r *http.Request) {
 		Priority:    body.Priority,
 		Status:      body.Status,
 		Pinned:      body.Pinned,
+		Hidden:      body.Hidden,
 		Recurrence:  body.Recurrence,
 	}
 	if body.DueAt != nil {
@@ -185,12 +209,23 @@ func (s *Server) handleUpdateReminder(w http.ResponseWriter, r *http.Request) {
 		}
 		in.ListID = &listID
 	}
+	if body.Hidden != nil && !*body.Hidden {
+		// Unhiding reveals content, so it must go through POST /unhide where
+		// the privacy password is verified; PATCH would bypass it.
+		writeError(w, http.StatusForbidden, "unhide requires the privacy password — use POST /unhide")
+		return
+	}
+	if body.Hidden != nil && *body.Hidden {
+		if !s.ensurePrivacyPassword(w, r, userID, body.PrivacyPassword) {
+			return
+		}
+	}
 	item, err := s.db.UpdateReminder(r.Context(), userID, id, in)
 	if err != nil {
 		writeStorageError(w, err, "could not update reminder")
 		return
 	}
-	writeJSON(w, http.StatusOK, reminderPayload(item))
+	reminderResponse(w, http.StatusOK, item)
 }
 
 func (s *Server) handleDeleteReminder(w http.ResponseWriter, r *http.Request) {
@@ -220,7 +255,7 @@ func (s *Server) handleDoneReminder(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err, "could not update reminder")
 		return
 	}
-	writeJSON(w, http.StatusOK, reminderPayload(item))
+	reminderResponse(w, http.StatusOK, item)
 }
 
 func (s *Server) handlePauseReminder(w http.ResponseWriter, r *http.Request) {
@@ -248,7 +283,7 @@ func (s *Server) handlePauseReminder(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err, "could not pause reminder")
 		return
 	}
-	writeJSON(w, http.StatusOK, reminderPayload(item))
+	reminderResponse(w, http.StatusOK, item)
 }
 
 func (s *Server) handleResumeReminder(w http.ResponseWriter, r *http.Request) {
@@ -263,7 +298,7 @@ func (s *Server) handleResumeReminder(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err, "could not resume reminder")
 		return
 	}
-	writeJSON(w, http.StatusOK, reminderPayload(item))
+	reminderResponse(w, http.StatusOK, item)
 }
 
 func (s *Server) handleSnoozeReminder(w http.ResponseWriter, r *http.Request) {
@@ -288,7 +323,132 @@ func (s *Server) handleSnoozeReminder(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err, "could not snooze reminder")
 		return
 	}
+	reminderResponse(w, http.StatusOK, item)
+}
+
+// ---------------------------------------------------------------- privacy / unlock
+
+const hiddenTitlePlaceholder = "Hidden reminder"
+
+// ensurePrivacyPassword guarantees the account has a privacy password before a
+// reminder is hidden, creating one from the offered value when none exists.
+// An existing password is never replaced here; that happens in Settings.
+// It writes the error response itself and reports false when the caller must stop.
+func (s *Server) ensurePrivacyPassword(w http.ResponseWriter, r *http.Request, userID uuid.UUID, offered string) bool {
+	user, err := s.db.GetUserByID(r.Context(), userID)
+	if err != nil {
+		writeStorageError(w, err, "could not load profile")
+		return false
+	}
+	if user.HideHash != "" {
+		return true
+	}
+	hash, err := auth.HashPassword(offered)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "privacy password must be at least 8 characters")
+		return false
+	}
+	if err := s.db.SetUserHideHash(r.Context(), userID, hash); err != nil {
+		writeStorageError(w, err, "could not save privacy password")
+		return false
+	}
+	return true
+}
+
+// verifyPrivacyPassword checks the request password against the account
+// privacy password. It writes the error response itself and reports false when
+// the caller must stop.
+func (s *Server) verifyPrivacyPassword(w http.ResponseWriter, r *http.Request, userID, id uuid.UUID, password string) (reminder.Reminder, bool) {
+	item, err := s.db.GetReminder(r.Context(), userID, id)
+	if err != nil {
+		writeStorageError(w, err, "could not load reminder")
+		return reminder.Reminder{}, false
+	}
+	if !item.Hidden {
+		// Unlocking an already visible reminder is a no-op, not an error.
+		return item, true
+	}
+	user, err := s.db.GetUserByID(r.Context(), userID)
+	if err != nil {
+		writeStorageError(w, err, "could not load profile")
+		return reminder.Reminder{}, false
+	}
+	if user.HideHash == "" {
+		// Defensive: a hidden reminder without a privacy password could never
+		// be unlocked, so refuse rather than leak the content.
+		writeError(w, http.StatusConflict, "privacy password is not configured")
+		return reminder.Reminder{}, false
+	}
+	if !auth.CheckPassword(user.HideHash, password) {
+		writeError(w, http.StatusUnauthorized, "wrong privacy password")
+		return reminder.Reminder{}, false
+	}
+	return item, true
+}
+
+func (s *Server) handleUnlockReminder(w http.ResponseWriter, r *http.Request) {
+	userID := userIDFromContext(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var body unlockRequest
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	item, ok := s.verifyPrivacyPassword(w, r, userID, id, body.Password)
+	if !ok {
+		return
+	}
+	// The unlock response is the only read that carries the real content.
 	writeJSON(w, http.StatusOK, reminderPayload(item))
+}
+
+func (s *Server) handleUnhideReminder(w http.ResponseWriter, r *http.Request) {
+	userID := userIDFromContext(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var body unlockRequest
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if _, ok := s.verifyPrivacyPassword(w, r, userID, id, body.Password); !ok {
+		return
+	}
+	hidden := false
+	item, err := s.db.UpdateReminder(r.Context(), userID, id, reminder.UpdateInput{Hidden: &hidden})
+	if err != nil {
+		writeStorageError(w, err, "could not update reminder")
+		return
+	}
+	writeJSON(w, http.StatusOK, reminderPayload(item))
+}
+
+// reminderOrLock loads the parent reminder of a subtask/comment route and
+// refuses hidden ones: their attachments count as content, so they unlock with
+// the same privacy password as the reminder itself.
+func (s *Server) reminderOrLock(w http.ResponseWriter, r *http.Request) (reminder.Reminder, bool) {
+	userID := userIDFromContext(r.Context())
+	id, ok := parseURLUUID(w, r, "id")
+	if !ok {
+		return reminder.Reminder{}, false
+	}
+	item, err := s.db.GetReminder(r.Context(), userID, id)
+	if err != nil {
+		writeStorageError(w, err, "not found")
+		return reminder.Reminder{}, false
+	}
+	if item.Hidden {
+		writeError(w, http.StatusLocked, "reminder is locked")
+		return reminder.Reminder{}, false
+	}
+	return item, true
 }
 
 func reminderPayload(r reminder.Reminder) map[string]any {
@@ -302,6 +462,7 @@ func reminderPayload(r reminder.Reminder) map[string]any {
 		"priority":    r.Priority,
 		"recurrence":  r.Recurrence,
 		"pinned":      r.Pinned,
+		"hidden":      r.Hidden,
 		"created_at":  r.CreatedAt.UTC().Format(time.RFC3339),
 		"updated_at":  r.UpdatedAt.UTC().Format(time.RFC3339),
 	}
@@ -321,4 +482,24 @@ func reminderPayload(r reminder.Reminder) map[string]any {
 		out["completed_at"] = r.CompletedAt.UTC().Format(time.RFC3339)
 	}
 	return out
+}
+
+// maskedReminderPayload is what every ordinary read of a hidden reminder
+// returns: metadata stays (due time, status, priority), content does not. Only
+// the unlock endpoint hands back the real title and description.
+func maskedReminderPayload(r reminder.Reminder) map[string]any {
+	out := reminderPayload(r)
+	out["title"] = hiddenTitlePlaceholder
+	out["description"] = ""
+	return out
+}
+
+// reminderResponse writes a reminder payload, masking hidden reminders so a
+// mutation response cannot leak content the caller has not unlocked.
+func reminderResponse(w http.ResponseWriter, code int, r reminder.Reminder) {
+	if r.Hidden {
+		writeJSON(w, code, maskedReminderPayload(r))
+		return
+	}
+	writeJSON(w, code, reminderPayload(r))
 }

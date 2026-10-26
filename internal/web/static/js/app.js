@@ -5,6 +5,10 @@ const state = {
   search: '',
   listFilter: '',
   searchFocus: false,
+  // Session-scoped unlock state for hidden reminders: ids revealed via the
+  // privacy password and their full payloads. Cleared by a page reload.
+  revealed: new Set(),
+  revealedData: new Map(),
 };
 
 function allRoutes() {
@@ -15,6 +19,7 @@ function allRoutes() {
     '/settings': renderSettings,
     '/settings/vacation': renderVacationSettings,
     '/settings/notifications': renderNotificationSettings,
+    '/settings/privacy': renderPrivacySettings,
     // The old duplicate wording page now lands on the single wording screen.
     '/settings/templates': () => renderMessageWording(),
     '/admin': renderAdmin,
@@ -325,6 +330,121 @@ function confirmDeleteReminder(id, onConfirm) {
   });
 }
 
+// ---------------------------------------------------------------- privacy password
+
+// promptPrivacyPassword asks for the account privacy password in a drawer and
+// hands the entered value to onSubmit. The drawer stays open on failure so the
+// user can retry.
+function promptPrivacyPassword({ title, message, submitLabel }, onSubmit) {
+  const drawer = openDrawer(title, `
+    ${message ? `<p style="margin-top:0">${escapeHTML(message)}</p>` : ''}
+    <div class="field">
+      <label for="privacy-pw"><span class="form-label-icon">${actionIconSVG('lock')}Privacy password</span></label>
+      <input id="privacy-pw" type="password" autocomplete="off" required>
+    </div>
+  `, `<button class="btn" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" id="privacy-pw-go">${escapeHTML(submitLabel)}</button>`);
+  const input = drawer.querySelector('#privacy-pw');
+  input?.focus();
+  const submit = drawer.querySelector('#privacy-pw-go');
+  const go = async () => {
+    const pw = input.value;
+    if (!pw) {
+      showToast('Enter the privacy password', 'error');
+      return;
+    }
+    await onSubmit(pw);
+  };
+  submit?.addEventListener('click', go);
+  input?.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+}
+
+// unlockReminder reveals one hidden reminder for the current session.
+function unlockReminder(id, rerender) {
+  promptPrivacyPassword({
+    title: 'Unlock reminder',
+    message: 'Enter your privacy password to reveal this reminder until the page reloads.',
+    submitLabel: 'Unlock',
+  }, async (pw) => {
+    try {
+      const data = await API.post(`/api/reminders/${id}/unlock`, { password: pw });
+      state.revealed.add(id);
+      state.revealedData.set(id, data);
+      closeDrawer();
+      showToast('Reminder revealed');
+      await rerender();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+}
+
+// unhideReminder removes hiding permanently after a password check.
+function unhideReminder(id, rerender) {
+  promptPrivacyPassword({
+    title: 'Unhide reminder',
+    message: 'Enter your privacy password to remove hiding permanently.',
+    submitLabel: 'Unhide',
+  }, async (pw) => {
+    try {
+      await API.post(`/api/reminders/${id}/unhide`, { password: pw });
+      state.revealed.delete(id);
+      state.revealedData.delete(id);
+      closeDrawer();
+      showToast('Reminder unhidden');
+      await rerender();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+}
+
+// promptUnlockReminder resolves with the full reminder payload after a
+// successful unlock, or null when the user cancels. Used before editing.
+function promptUnlockReminder(id, message) {
+  return new Promise((resolve) => {
+    promptPrivacyPassword({ title: 'Hidden reminder', message, submitLabel: 'Unlock' }, async (pw) => {
+      try {
+        const data = await API.post(`/api/reminders/${id}/unlock`, { password: pw });
+        state.revealed.add(id);
+        state.revealedData.set(id, data);
+        closeDrawer();
+        resolve(data);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  });
+}
+
+// privacyFieldsHTML is the form section for hiding a reminder. Hiding itself
+// is free; the inline password field only appears when the account does not
+// have a privacy password yet.
+function privacyFieldsHTML(privacyEnabled) {
+  return `
+    <fieldset class="field privacy-fields">
+      <legend><span class="form-label-icon">${actionIconSVG('lock')}Privacy</span></legend>
+      <label class="privacy-toggle">
+        <input id="r-hidden" type="checkbox">
+        <span>Hide this reminder${privacyEnabled ? '' : ' <span style="text-transform:none;font-weight:400">(sets your privacy password)</span>'}</span>
+      </label>
+      ${privacyEnabled ? '' : `
+      <div id="r-privacy-pw-wrap" style="display:none">
+        <label class="field-label" for="r-privacy-pw">Privacy password</label>
+        <input id="r-privacy-pw" type="password" autocomplete="new-password" placeholder="Min 8 characters">
+        <p class="privacy-hint">One password for all hidden reminders. You'll need it to unhide — there is no recovery.</p>
+      </div>`}
+    </fieldset>`;
+}
+
+function appendPrivacyToBody(drawer, body) {
+  const hiddenToggle = drawer.querySelector('#r-hidden');
+  if (hiddenToggle?.checked) {
+    body.hidden = true;
+    const pw = drawer.querySelector('#r-privacy-pw')?.value;
+    if (pw) body.privacy_password = pw;
+  }
+}
+
 async function runReminderAction(btn, rerender) {
   const id = btn.dataset.id;
   const action = btn.dataset.action;
@@ -353,10 +473,22 @@ async function runReminderAction(btn, rerender) {
     }
     await API.post(`/api/reminders/${id}/snooze`, { until: until.toISOString() });
   }
+  if (action === 'unlock') {
+    unlockReminder(id, rerender);
+    return;
+  }
+  if (action === 'unhide') {
+    unhideReminder(id, rerender);
+    return;
+  }
   if (action === 'delete') {
     confirmDeleteReminder(id, rerender);
     return;
   }
+  // Any change to a hidden reminder invalidates what was revealed, so the
+  // card re-masks until it is unlocked again.
+  state.revealed.delete(id);
+  state.revealedData.delete(id);
   showToast(action === 'done' ? 'Nice — done' : 'Updated');
   await rerender();
 }
@@ -705,6 +837,10 @@ async function renderSettings(route = '/settings') {
     await renderNotificationSettings();
     return;
   }
+  if (route === '/settings/privacy') {
+    await renderPrivacySettings();
+    return;
+  }
   let notifyCfg = {};
   try { notifyCfg = await API.get('/api/me/notify'); } catch {}
   const emailStatus = notifyCfg.email_enabled ? 'Email on' : (notifyCfg.channels?.email_configured ? 'Email off' : 'Not configured');
@@ -726,6 +862,11 @@ async function renderSettings(route = '/settings') {
         <h3>${iconHTML('moon')}Vacation &amp; pause</h3>
         <p>Pause all notifications or review paused reminders.</p>
         ${state.user?.notifications_paused ? '<p class="settings-card-status" style="color:var(--danger)">Notifications paused</p>' : ''}
+      </div>
+      <div class="card settings-card" data-href="#/settings/privacy">
+        <h3>${iconHTML('lock')}Privacy</h3>
+        <p>Hide reminders behind a privacy password.</p>
+        <p class="settings-card-status">${state.user?.privacy_enabled ? 'Privacy password set' : 'No privacy password'}</p>
       </div>
       <div class="card settings-card" id="open-profile">
         <h3>${iconHTML('panel')}Profile</h3>
@@ -858,6 +999,61 @@ async function renderVacationSettings() {
   });
 }
 
+async function renderPrivacySettings() {
+  const enabled = !!state.user?.privacy_enabled;
+  const main = `
+    <h1 class="page-title">Privacy</h1>
+    <p class="page-sub">One privacy password unlocks every hidden reminder.</p>
+    <div class="card" style="margin-bottom:16px">
+      <p style="margin:0 0 12px">Status: <strong>${enabled ? 'Privacy password set' : 'Not set'}</strong></p>
+      ${enabled ? `
+        <div class="field"><label for="privacy-current">Current privacy password</label><input id="privacy-current" type="password" autocomplete="off"></div>
+        <div class="field"><label for="privacy-new">New privacy password</label><input id="privacy-new" type="password" autocomplete="new-password" placeholder="Min 8 characters"></div>
+        <p class="privacy-hint" style="margin:0 0 12px">Removing the password needs all reminders unhidden first. There is no recovery — a forgotten password means deleting and recreating hidden reminders.</p>
+        <button class="btn btn-primary" id="privacy-save">Change privacy password</button>
+        <button class="btn btn-danger" id="privacy-remove">Remove</button>
+      ` : `
+        <div class="field"><label for="privacy-new">Privacy password</label><input id="privacy-new" type="password" autocomplete="new-password" placeholder="Min 8 characters"></div>
+        <p class="privacy-hint" style="margin:0 0 12px">Needed to unhide hidden reminders. There is no recovery — a forgotten password means deleting and recreating hidden reminders.</p>
+        <button class="btn btn-primary" id="privacy-save">Set privacy password</button>
+      `}
+    </div>
+    <a href="#/settings" class="btn btn-ghost btn-sm">← Back to settings</a>
+  `;
+  document.getElementById('app').innerHTML = shellHTML('/settings/privacy', main);
+  bindShell('/settings/privacy');
+  document.getElementById('privacy-save')?.addEventListener('click', async () => {
+    const body = { new_password: document.getElementById('privacy-new').value };
+    const cur = document.getElementById('privacy-current')?.value;
+    if (cur) body.current_password = cur;
+    try {
+      await API.post('/api/me/privacy', body);
+      state.user = await API.get('/api/me');
+      showToast(enabled ? 'Privacy password changed' : 'Privacy password set');
+      renderPrivacySettings();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+  document.getElementById('privacy-remove')?.addEventListener('click', () => {
+    promptPrivacyPassword({
+      title: 'Remove privacy password',
+      message: 'Hidden reminders must be unhidden first. Enter the privacy password to remove it.',
+      submitLabel: 'Remove',
+    }, async (pw) => {
+      try {
+        await API.delete('/api/me/privacy', { password: pw });
+        state.user = await API.get('/api/me');
+        closeDrawer();
+        showToast('Privacy password removed');
+        renderPrivacySettings();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  });
+}
+
 // ---------------------------------------------------------------- reminder drawers
 
 function listPickerHTML(lists, selectedID) {
@@ -974,6 +1170,10 @@ function reminderFormFields({ title, description, due, recurrence, priority }) {
 function bindReminderForm(drawer) {
   bindDueFields(drawer);
   bindChoiceControls(drawer);
+  drawer.querySelector('#r-hidden')?.addEventListener('change', (e) => {
+    const wrap = drawer.querySelector('#r-privacy-pw-wrap');
+    if (wrap) wrap.style.display = e.target.checked ? '' : 'none';
+  });
 }
 
 async function openCreateDrawer(defaultDate) {
@@ -986,6 +1186,7 @@ async function openCreateDrawer(defaultDate) {
   const drawer = openDrawer('New reminder', `
     ${reminderFormFields({ due: defaultDue })}
     ${listPickerHTML(lists, '')}
+    ${privacyFieldsHTML(state.user?.privacy_enabled)}
   `, `<button class="btn" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" id="save-reminder">Save reminder</button>`);
   bindReminderForm(drawer);
   drawer.querySelector('#save-reminder').addEventListener('click', async () => {
@@ -1005,6 +1206,7 @@ async function openCreateDrawer(defaultDate) {
     };
     const listId = document.getElementById('r-list')?.value;
     if (listId) body.list_id = listId;
+    appendPrivacyToBody(drawer, body);
     try {
       await API.post('/api/reminders', body);
       closeDrawer();
@@ -1023,17 +1225,38 @@ async function openReminderDrawer(id) {
   let subtasks = [];
   let comments = [];
   try {
-    [reminder, lists, subtasks, comments] = await Promise.all([
+    [reminder, lists] = await Promise.all([
       API.get(`/api/reminders/${id}`),
       fetchUserLists(),
-      API.get(`/api/reminders/${id}/subtasks`).then((d) => d.subtasks || []).catch(() => []),
-      API.get(`/api/reminders/${id}/comments`).then((d) => d.comments || []).catch(() => []),
     ]);
   } catch (err) {
     showToast(err.message, 'error');
     return;
   }
+  // A hidden reminder only opens after unlocking; subtasks and comments are
+  // locked server-side until then.
+  if (reminder.hidden) {
+    const cached = state.revealedData.get(id);
+    const full = cached || await promptUnlockReminder(id, 'Enter your privacy password to edit this hidden reminder.');
+    if (!full) return;
+    reminder = full;
+  }
+  try {
+    [subtasks, comments] = await Promise.all([
+      API.get(`/api/reminders/${id}/subtasks`).then((d) => d.subtasks || []).catch(() => []),
+      API.get(`/api/reminders/${id}/comments`).then((d) => d.comments || []).catch(() => []),
+    ]);
+  } catch {
+    subtasks = [];
+    comments = [];
+  }
   const due = new Date(reminder.due_at);
+  const privacySection = reminder.hidden
+    ? `<div class="privacy-banner">
+        <span>${iconHTML('lock')}Hidden — masked until unlocked</span>
+        <button type="button" class="btn btn-sm" id="unhide-from-drawer">Unhide</button>
+      </div>`
+    : privacyFieldsHTML(state.user?.privacy_enabled);
   const drawer = openDrawer('Edit reminder', `
     ${reminderFormFields({
       title: reminder.title,
@@ -1043,6 +1266,7 @@ async function openReminderDrawer(id) {
       priority: reminder.priority,
     })}
     ${listPickerHTML(lists, reminder.list_id)}
+    ${privacySection}
     <dl class="detail-list">
       <dt>Status</dt><dd>${escapeHTML(reminder.status)}</dd>
       <dt>Created</dt><dd>${escapeHTML(new Date(reminder.created_at).toLocaleDateString())}</dd>
@@ -1052,6 +1276,10 @@ async function openReminderDrawer(id) {
   `, `<button class="btn" type="button" data-close-drawer>Cancel</button><button class="btn btn-primary" id="save-reminder">Save changes</button>`);
   bindReminderForm(drawer);
   bindDrawerExtras(drawer, id);
+  drawer.querySelector('#unhide-from-drawer')?.addEventListener('click', () => {
+    unhideReminder(id, () => renderApp(location.hash.replace('#', '') || '/today'));
+    return;
+  });
   drawer.querySelector('#save-reminder').addEventListener('click', async () => {
     const title = document.getElementById('r-title').value.trim();
     const dueLocal = readDueLocal(drawer);
@@ -1069,8 +1297,11 @@ async function openReminderDrawer(id) {
     };
     const listId = document.getElementById('r-list')?.value;
     if (listId) body.list_id = listId;
+    appendPrivacyToBody(drawer, body);
     try {
       await API.patch(`/api/reminders/${id}`, body);
+      state.revealed.delete(id);
+      state.revealedData.delete(id);
       closeDrawer();
       showToast('Reminder updated');
       const route = location.hash.replace('#', '') || '/today';
@@ -1111,6 +1342,7 @@ async function renderNewReminderPage(route) {
         ${reminderFormFields({ due: defaultDue })}
         <input type="hidden" id="r-title-handoff" value="${escapeHTML(handoffTitle)}">
         ${listPickerHTML(lists, '')}
+        ${privacyFieldsHTML(state.user?.privacy_enabled)}
         <div class="pagefoot">
           <button type="submit" class="btn btn-primary btn-with-icon" id="save-reminder-page">${actionIconSVG('check')}<span class="btn-label">Save reminder</span></button>
           <button type="button" class="btn" id="cancel-new-reminder">Cancel</button>
@@ -1149,6 +1381,7 @@ async function renderNewReminderPage(route) {
     };
     const listId = form.querySelector('#r-list')?.value;
     if (listId) body.list_id = listId;
+    appendPrivacyToBody(form, body);
     const saveBtn = form.querySelector('#save-reminder-page');
     saveBtn.disabled = true;
     try {

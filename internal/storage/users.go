@@ -86,7 +86,10 @@ type User struct {
 	Templates                notify.TemplateSet
 	MailTemplates            []MailTemplate
 	ActiveMailTemplateID     *uuid.UUID
-	CreatedAt                time.Time
+	// HideHash is the bcrypt hash of the account privacy password that unlocks
+	// hidden reminders. Empty means no privacy password is configured yet.
+	HideHash  string
+	CreatedAt time.Time
 }
 
 // NotificationsCurrentlyPaused accounts for a vacation window that has expired:
@@ -149,6 +152,7 @@ type userDoc struct {
 	TelegramChatID           *int64             `bson:"telegram_chat_id,omitempty"`
 	TelegramLinkCode         string             `bson:"telegram_link_code,omitempty"`
 	TelegramLinkExpiresAt    *time.Time         `bson:"telegram_link_expires_at,omitempty"`
+	HideHash                 string             `bson:"hide_hash,omitempty"`
 	CreatedAt                time.Time          `bson:"created_at"`
 	UpdatedAt                time.Time          `bson:"updated_at"`
 }
@@ -170,6 +174,7 @@ func userFromDoc(doc userDoc) User {
 		Templates:                doc.Templates,
 		MailTemplates:            doc.MailTemplates,
 		ActiveMailTemplateID:     doc.ActiveMailTemplateID,
+		HideHash:                 doc.HideHash,
 		CreatedAt:                doc.CreatedAt,
 	}
 }
@@ -301,6 +306,22 @@ func (db *DB) SetUserProfile(ctx context.Context, userID uuid.UUID, displayName,
 func (db *DB) SetUserPassword(ctx context.Context, userID uuid.UUID, passwordHash string) error {
 	res, err := db.collection("users").UpdateOne(ctx, bson.M{"_id": userID}, bson.M{
 		"$set": bson.M{"password_hash": passwordHash, "updated_at": time.Now().UTC()},
+	})
+	if err != nil {
+		return err
+	}
+	if res.MatchedCount == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetUserHideHash stores or clears the privacy password hash. An empty hash
+// means no privacy password; the caller must verify the current one and ensure
+// no hidden reminders would become unreachable before clearing.
+func (db *DB) SetUserHideHash(ctx context.Context, userID uuid.UUID, hideHash string) error {
+	res, err := db.collection("users").UpdateOne(ctx, bson.M{"_id": userID}, bson.M{
+		"$set": bson.M{"hide_hash": hideHash, "updated_at": time.Now().UTC()},
 	})
 	if err != nil {
 		return err
