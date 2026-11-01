@@ -22,7 +22,7 @@ docker compose up -d
 go run ./cmd/server
 ```
 
-Open http://localhost:8090
+Open http://localhost:8090 for the landing page. The app itself is at http://localhost:8090/portal
 
 ### Admin access
 

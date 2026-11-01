@@ -138,11 +138,15 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 		fileServer.ServeHTTP(w, r)
 	})))
-	r.Get("/", s.serveIndex)
+	r.Get("/", s.serveLanding)
 	r.Get("/portal", s.serveIndex)
 	r.NotFound(s.serveIndex)
 
 	return r
+}
+
+func (s *Server) serveLanding(w http.ResponseWriter, _ *http.Request) {
+	s.serveHTML(w, "static/landing.html")
 }
 
 func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
@@ -150,9 +154,13 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	b, err := staticFiles.ReadFile("static/index.html")
+	s.serveHTML(w, "static/index.html")
+}
+
+func (s *Server) serveHTML(w http.ResponseWriter, name string) {
+	b, err := staticFiles.ReadFile(name)
 	if err != nil {
-		http.Error(w, "missing index", http.StatusInternalServerError)
+		http.Error(w, "missing page", http.StatusInternalServerError)
 		return
 	}
 	htmlDoc := string(b)
@@ -166,10 +174,9 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 			htmlDoc = strings.Replace(htmlDoc, "<head>", "<head>\n  "+tag, 1)
 		}
 	}
-	b = []byte(htmlDoc)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, must-revalidate")
-	_, _ = w.Write(b)
+	_, _ = w.Write([]byte(htmlDoc))
 }
 
 // HTTPServer builds the configured server without starting it, so main can
